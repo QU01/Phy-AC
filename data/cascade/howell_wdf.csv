@@ -1,0 +1,12 @@
+# Ancla de regresión: work-done factor medio vs número de etapa.
+# Howell & Bonham (1950), tabla clásica reproducida en Dixon & Hall §5 y Saravanamuttoo et al.
+# Generado por data_pipeline.build(); verificado por validate.py.
+stage,work_done_factor
+1,0.982
+2,0.952
+3,0.929
+4,0.91
+5,0.895
+6,0.883
+7,0.875
+8,0.868

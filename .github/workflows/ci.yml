@@ -1,0 +1,46 @@
+# CI de Quasar Phy-AC
+#
+# python : verificación (test_phyac.py) + validación
+#          (validate.py --strict: PR/η vs máquinas NASA, anclas de regresión)
+#          en Linux y Windows.
+# dotnet : compila la capa 5c (AxialCompressorDesigner). El smoke
+#          axial_compressor.json → STL corre localmente (PicoGK necesita su
+#          runtime nativo x64); si el runner lo soporta, promoverlo a paso de CI.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install numpy matplotlib
+      - name: Verification suite
+        run: python test_phyac.py
+      - name: Validation campaign (strict)
+        run: python validation/validate.py --strict
+      - name: Package builds
+        run: |
+          pip install build
+          python -m build --sdist --wheel
+
+  dotnet:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+      - name: Build layer 5c
+        run: dotnet build AxialCompressorDesigner.sln -c Debug

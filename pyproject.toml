@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "phyac"
+version = "0.1.0"
+description = "Quasar Phy-AC — diseño autónomo de compresores axiales: espec (6 números) → frente de Pareto verificado → geometría de filas de álabes → STL imprimibles"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Quasar Solutions Lab" }]
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Manufacturing",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+viz = ["matplotlib>=3.7"]      # sección de visualización meanline del reporte
+l1 = ["turbo-design==1.4.2", "cantera"]  # fidelidad L1 (spool axial SCM)
+step = ["cadquery"]            # export STEP de las filas de álabes
+all = ["phyac[viz,l1,step]"]
+
+[project.scripts]
+phyac = "phyac_cli:main"
+
+# Capas 1-5b como módulos planos (el paquete C# AxialCompressorDesigner, capa 5c,
+# se compila por separado con .NET 9 — ver README).
+[tool.setuptools]
+py-modules = [
+    "physics_core",
+    "structures_core",
+    "neural_optimizer",
+    "geometry_generator",
+    "blade_profiles",
+    "data_pipeline",
+    "report_generator",
+    "visualization",
+    "cli_style",
+    "phyac_cli",
+]
