@@ -1,6 +1,6 @@
 # Resultados de validación — Quasar Phy-AC
 
-Generado por `validation/validate.py` el 2026-07-16 (meanline L0, sin calibración afín). **Regenerar tras cualquier cambio en `physics_core.py`** — este archivo se versiona como evidencia.
+Generado por `validation/validate.py` el 2026-07-17 (meanline L0, sin calibración afín). **Regenerar tras cualquier cambio en `physics_core.py`** — este archivo se versiona como evidencia.
 
 Metodología: el θ de cada máquina reproduce su annulus (r_tip vía φ1) y su TRABAJO medido (ψ desde ΔT0 publicado); se califica la predicción de pérdidas → (η, PR). Tolerancias por máquina en `machines.py` (monoetapa 5%/2 pts; transónicos y multietapa relajados — ver notas).
 

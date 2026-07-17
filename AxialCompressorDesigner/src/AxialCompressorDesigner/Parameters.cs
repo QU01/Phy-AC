@@ -24,6 +24,11 @@ namespace AxialCompressorDesigner
         public float StaggerDeg;          // signed (rotor +, stator −)
         public float ThicknessMm;         // t_max — voxMeshShell thickness
         public float[][] CamberPoints;    // chord frame, mm, centroid at 0,0
+        public float[][] ProfilePoints;   // closed CCW profile (contract
+                                          // `points`) — enables the solid
+                                          // loft with the REAL NACA-65/DCA
+                                          // thickness distribution; null in
+                                          // legacy contracts (shell fallback)
     }
 
     /// <summary>One blade row (rotor or stator) with its span sections.</summary>
@@ -134,6 +139,18 @@ namespace AxialCompressorDesigner
                     return $"row stage {row.StageIndex}: camber point " +
                            "count differs between sections (loft needs " +
                            "equal counts)";
+            int nProf = -1;
+            foreach (SectionParams s in row.Sections)
+            {
+                if (s.ProfilePoints == null)
+                    continue;
+                if (nProf < 0)
+                    nProf = s.ProfilePoints.Length;
+                else if (s.ProfilePoints.Length != nProf)
+                    return $"row stage {row.StageIndex}: profile point " +
+                           "count differs between sections (solid loft " +
+                           "needs equal counts)";
+            }
             return null;
         }
     }

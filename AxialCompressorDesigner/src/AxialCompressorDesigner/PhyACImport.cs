@@ -116,6 +116,11 @@ namespace AxialCompressorDesigner
                     ThicknessMm = (float)oSec.GetProperty("thickness_mm").GetDouble(),
                     CamberPoints = afPolyline(oSec.GetProperty("camber_points")),
                 };
+                // full closed profile (real thickness distribution) —
+                // enables the solid loft; optional for legacy contracts
+                if (oSec.TryGetProperty("points", out JsonElement ePts)
+                    && ePts.ValueKind == JsonValueKind.Array)
+                    sec.ProfilePoints = afPolyline(ePts);
                 row.Sections.Add(sec);
             }
             return row;

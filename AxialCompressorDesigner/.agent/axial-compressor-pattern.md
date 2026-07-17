@@ -3,26 +3,39 @@
 Receta PicoGK del `AxialCompressorDesigner` — el análogo axial del
 `compressor-pattern.md` de Phy-CC. Tres piezas:
 
-## 1. Filas de álabes: lámina de comba + voxMeshShell (patrón Phy-CC v3)
+## 1. Filas de álabes: loft SÓLIDO del perfil real (default 2026-07-17)
 
-NUNCA construir el perfil cerrado presión+succión como malla cosida: donde
-el radio local de curvatura baja de ½·espesor las dos láminas offset se
-autointersecan y OpenVDB lo renderiza como esquirlas. La receta robusta
-(heredada de `Blades.cs` v3 de Phy-CC):
+El contrato lleva por sección el PERFIL CERRADO (`points`: 60 pts CCW,
+distribución de espesor NACA-65/DCA real, sin autointersección por
+invariante analítico de blade_profiles.py). Cada álabe se construye como
+malla estanca: paredes regladas entre costillas densificadas + tapas
+hub/punta trianguladas LE→TE (zipper entre las cadenas presión/succión,
+independiente del índice de inicio y del winding — las secciones de
+estátor llegan espejadas y reordenadas), y se voxeliza directo con
+`new Voxels(msh)`. Esto conserva el radio de LE, la posición del espesor
+máximo y la asimetría presión/succión que la receta de lámina destruía.
 
-1. La capa Python (geometry_generator.py) emite por sección la LÍNEA DE
-   COMBA (25 pts, marco de cuerda, centroide en el origen) + stagger
-   FIRMADO (rotor +, estátor −) + espesor.
-2. Por álabe: rotar cada polilínea por su stagger, envolver en el cilindro
-   de su radio de stacking (φ = φ0 + y'/r — conserva longitud de arco),
-   coser UNA lámina de quads entre secciones (winding irrelevante).
-3. `Voxels.voxMeshShell(msh, ½·espesor_medio)` engorda la lámina en el
-   dominio de distancia con signo: LE/TE/punta redondeados, imposible
-   autointersecar.
-4. Raíz hundida `RootSinkMm` en su cuerpo (tambor para rotores, carcasa
-   para estátores); extremo libre retraído `holgura + ½·espesor` para que
-   la inflación del shell no se coma el gap de marcha.
-5. Espesor mínimo 2 vóxeles o los álabes traseros desaparecen del campo.
+Sobre la advertencia v3 de Phy-CC ("nunca coser presión+succión"): ese
+modo de fallo es de mallas construidas OFFSETEANDO la lámina de comba a
+nivel de malla, que se pliegan donde el radio de comba < ½·espesor. Aquí
+el contorno cerrado viene analítico de Python con el invariante de no
+autointersección, así que el loft sólido es seguro.
+
+Extremo libre retraído `holgura + ½·vóxel` (el redondeo de superficie);
+raíz hundida `RootSinkMm` en su cuerpo.
+
+## 1b. Fallback: lámina de comba + voxMeshShell (patrón Phy-CC v3)
+
+Se usa para contratos legacy sin `points` y para filas con espesor medio
+< 2 vóxeles (el loft sólido no sobreviviría la voxelización). Receta:
+
+1. Rotar la línea de comba por su stagger FIRMADO, envolver en el
+   cilindro (φ = φ0 + y'/r), coser UNA lámina de quads.
+2. `Voxels.voxMeshShell(msh, ½·espesor_medio)`: LE/TE/punta redondeados,
+   imposible autointersecar. Espesor uniforme (pierde la distribución).
+3. Raíz hundida; extremo libre retraído `holgura + ½·espesor`.
+4. Espesor clampeado a 2 vóxeles con WARNING en el log — la pieza sale
+   MÁS GRUESA que el diseño verificado; usar vóxel más fino.
 
 ## 2. Tambor del rotor
 

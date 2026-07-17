@@ -250,17 +250,20 @@ parentheses.
 ## Geometry (layer 5c)
 
 Convention: **Z is the rotational axis**; gas flows in +Z. Blade rows are
-built with the Phy-CC v3 vane recipe: the camber **mid-surface** (one sheet
-of quads per blade, densified to ~25 span ribs) is thickened with
-`Voxels.voxMeshShell`, which offsets in the signed-distance domain and
-cannot self-intersect — LE/TE and tip come out rounded at ½·thickness.
-The **IGV and OGV** rows the physics assumes are now in the contract and
-hang from the first/last casing rings. Blade roots sink into their body;
-free ends are pulled in by clearance + shell radius so the inflation does
-not eat the running gap. Axial row slots are computed from the **exact**
-rotated-camber envelope of every section (the hub runs at much lower
-stagger than the tip), so parts never overlap — a regression test guards
-this.
+built as **solid profile lofts**: each section's closed contour (real
+NACA-65/DCA thickness distribution from the contract's `points`) becomes
+a watertight mesh per blade — ruled walls between densified ribs plus
+LE→TE-zippered hub/tip caps — voxelized directly, preserving the LE
+radius and the pressure/suction asymmetry. Rows thinner than 2 voxels
+(and legacy contracts without `points`) fall back to the Phy-CC v3
+camber-sheet + `voxMeshShell` recipe with a **logged warning** when the
+thickness clamp engages. The **IGV and OGV** rows the physics assumes are
+in the contract and hang from the first/last casing rings. Blade roots
+sink into their body; free ends are pulled in by clearance so the voxel
+rounding does not eat the running gap. Axial row slots are computed from
+the **exact** rotated-camber envelope of every section (the hub runs at
+much lower stagger than the tip), so parts never overlap — a regression
+test guards this.
 
 ## Project Structure
 
@@ -409,13 +412,21 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
   PR correlation r ≈ 0.95 vs L0, systematic PR ratio ≈ 0.94 absorbed by
   `HiFiCalibration`.
 - **Blading** uses circular-arc camber with NACA 65-010 / biconvex
-  thickness and uniform-thickness printed vanes (camber sheet +
-  `voxMeshShell`); for CFD-faithful blades, use TD3's BladeGen/AGF path.
+  thickness, printed as solid-profile lofts (rows thinner than 2 voxels
+  fall back to a uniform-thickness camber shell with a logged warning);
+  for CFD-faithful custom blades, use TD3's BladeGen/AGF path.
 - Materials are handbook-typical; substitute certified specs for real
   design. The assembly view STL is for inspection only — print the parts.
 
 ## History
 
+- **2026-07-17 — solid-profile blades**: layer 5c lofts each section's
+  closed contour (`points` — the real NACA-65/DCA thickness
+  distribution) into a watertight solid per blade, preserving the LE
+  radius and pressure/suction asymmetry that the uniform-thickness
+  camber shell destroyed; the shell remains as fallback for sub-2-voxel
+  rows and legacy contracts, now with a **logged warning** when the
+  thickness clamp engages (previously a silent distortion).
 - **2026-07-17 — IGV/OGV**: the guide-vane rows the physics assumes now
   exist in the contract and the 3D parts — the IGV (axial → α₁
   pre-swirl, ahead of rotor 1) hangs from the first casing ring and the

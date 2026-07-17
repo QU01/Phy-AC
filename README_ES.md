@@ -255,17 +255,20 @@ contrato entre paréntesis.
 ## Geometría (capa 5c)
 
 Convención: **Z es el eje de rotación**; el gas fluye en +Z. Las filas se
-construyen con la receta v3 de Phy-CC: la **superficie media** de comba
-(una lámina de quads por álabe, densificada a ~25 costillas de span) se
-engorda con `Voxels.voxMeshShell`, que desplaza en el dominio de distancia
-con signo y no puede autointersecarse — LE/TE y punta salen redondeados a
-½·espesor. Las filas **IGV y OGV** que la física asume ya están en el
-contrato y cuelgan del primer/último anillo de carcasa. Las raíces se
-hunden en su cuerpo; los extremos libres se retraen holgura + radio del
-shell. Los huecos axiales de fila se calculan con la envolvente **exacta**
-de la comba rotada de cada sección (el hub corre a mucho menos stagger que
-la punta), así que las piezas nunca se solapan — un test de regresión lo
-cuida.
+construyen como **loft sólido del perfil real**: el contorno cerrado de
+cada sección (distribución de espesor NACA-65/DCA de `points`) se vuelve
+una malla estanca por álabe — paredes regladas entre costillas + tapas
+hub/punta trianguladas LE→TE — voxelizada directa, conservando el radio
+de LE y la asimetría presión/succión. Las filas con espesor < 2 vóxeles
+(y los contratos legacy sin `points`) caen a la receta v3 de Phy-CC
+(lámina de comba + `voxMeshShell`) con **WARNING en el log** cuando el
+clamp de espesor actúa. Las filas **IGV y OGV** que la física asume están
+en el contrato y cuelgan del primer/último anillo de carcasa. Las raíces
+se hunden en su cuerpo; los extremos libres se retraen la holgura para
+que el redondeo del vóxel no se coma el gap de marcha. Los huecos axiales
+de fila se calculan con la envolvente **exacta** de la comba rotada de
+cada sección (el hub corre a mucho menos stagger que la punta), así que
+las piezas nunca se solapan — un test de regresión lo cuida.
 
 ## Estructura del proyecto
 
@@ -323,15 +326,23 @@ predicción de pérdidas → (η, PR). Tabla vigente en
   un subproceso con timeout; cada etapa se transforma conservando el
   trabajo. Medido: 95% de solves exitosos, correlación PR r ≈ 0.95 vs L0,
   sesgo sistemático ≈ 0.94 absorbido por `HiFiCalibration`.
-- **Álabes**: comba de arco circular con espesor NACA 65-010 / biconvexo
-  y vanos impresos de espesor uniforme (lámina + `voxMeshShell`); para
-  álabes fieles a CFD, el camino es BladeGen/AGF de TD3.
+- **Álabes**: comba de arco circular con espesor NACA 65-010 / biconvexo,
+  impresos como loft sólido del perfil (filas < 2 vóxeles caen a lámina
+  de espesor uniforme con WARNING en el log); para álabes custom fieles
+  a CFD, el camino es BladeGen/AGF de TD3.
 - Materiales con valores típicos de handbook; sustituir por specs
   certificadas para diseño real. El STL de ensamble es solo inspección —
   imprimir las piezas.
 
 ## Historia
 
+- **2026-07-17 — álabes de perfil sólido**: la capa 5c hace loft del
+  contorno cerrado de cada sección (`points` — la distribución de
+  espesor NACA-65/DCA real) a un sólido estanco por álabe, conservando
+  el radio de LE y la asimetría presión/succión que la lámina de espesor
+  uniforme destruía; la lámina queda como fallback para filas < 2
+  vóxeles y contratos legacy, ahora con **WARNING en el log** cuando el
+  clamp de espesor actúa (antes era una distorsión silenciosa).
 - **2026-07-17 — IGV/OGV**: las filas de guía que la física asume ya
   existen en el contrato y en las piezas 3D — el IGV (axial → pre-swirl
   α₁, delante del rotor 1) cuelga del primer anillo de carcasa y el OGV

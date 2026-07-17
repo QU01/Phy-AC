@@ -394,11 +394,21 @@ the OGV from the last one.
 
 ### 8.2 Layer 5c (C#/PicoGK — real machine construction)
 
-Blade rows use the **Phy-CC v3 vane recipe**: mesh only the camber
-mid-surface (one quad sheet per blade, densified to ~25 ribs) and thicken
-with `Voxels.voxMeshShell` — the signed-distance offset cannot
-self-intersect, LE/TE/tip come out rounded at ½·thickness. Roots sink
-into their body; free ends retract clearance + shell radius.
+Blade rows are built (since 2026-07-17) as **solid profile lofts**: the
+contract's closed sections (real NACA-65/DCA thickness distribution, 60
+CCW points, analytically free of self-intersection) become one watertight
+mesh per blade — ruled side walls between densified ribs plus hub/tip
+caps triangulated LE→TE (a zipper between the pressure and suction
+chains, independent of start index and winding) — voxelized directly.
+This preserves the LE radius, the max-thickness position and the
+pressure/suction asymmetry that the previous camber-sheet recipe
+destroyed (uniform thickness). The **Phy-CC v3 vane recipe** (camber
+mid-surface thickened with `Voxels.voxMeshShell`) remains as the fallback
+for legacy contracts without `points` and for rows thinner than 2 voxels,
+where the shell clamps the thickness **and logs a warning** (the printed
+blade is thicker than the verified design — previously a silent
+distortion). Roots sink into their body; free ends retract clearance
+plus the surface rounding.
 
 Parts (split where real bolted joints sit — mid-gap between a stator TE
 and the next rotor LE):
