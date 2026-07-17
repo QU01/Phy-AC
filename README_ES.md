@@ -259,11 +259,13 @@ construyen con la receta v3 de Phy-CC: la **superficie media** de comba
 (una lámina de quads por álabe, densificada a ~25 costillas de span) se
 engorda con `Voxels.voxMeshShell`, que desplaza en el dominio de distancia
 con signo y no puede autointersecarse — LE/TE y punta salen redondeados a
-½·espesor. Las raíces se hunden en su cuerpo; los extremos libres se
-retraen holgura + radio del shell. Los huecos axiales de fila se calculan
-con la envolvente **exacta** de la comba rotada de cada sección (el hub
-corre a mucho menos stagger que la punta), así que las piezas nunca se
-solapan — un test de regresión lo cuida.
+½·espesor. Las filas **IGV y OGV** que la física asume ya están en el
+contrato y cuelgan del primer/último anillo de carcasa. Las raíces se
+hunden en su cuerpo; los extremos libres se retraen holgura + radio del
+shell. Los huecos axiales de fila se calculan con la envolvente **exacta**
+de la comba rotada de cada sección (el hub corre a mucho menos stagger que
+la punta), así que las piezas nunca se solapan — un test de regresión lo
+cuida.
 
 ## Estructura del proyecto
 
@@ -330,6 +332,13 @@ predicción de pérdidas → (η, PR). Tabla vigente en
 
 ## Historia
 
+- **2026-07-17 — IGV/OGV**: las filas de guía que la física asume ya
+  existen en el contrato y en las piezas 3D — el IGV (axial → pre-swirl
+  α₁, delante del rotor 1) cuelga del primer anillo de carcasa y el OGV
+  (α₁ residual → axial) del último; la desviación de Carter se
+  generaliza con el signo del camber (χ₂ = β₂ − sgn(θ)·δ): las filas
+  aceleradoras sobre-giran el metal más allá del ángulo de flujo
+  objetivo.
 - **2026-07-16 — corrección de Reynolds**: f_Re por fila en las pérdidas
   de fricción (nominal Koch & Smith 1976 a Re_c = 10⁶, exponente
   Wassell/Schäffler, rama laminar bajo 2×10⁵, sin crédito sobre 10⁶ —

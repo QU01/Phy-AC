@@ -73,17 +73,32 @@ def _row_extent_mm(sections: list[dict]) -> float:
     return 2.0 * half
 
 
-def _row_geometry(record: dict, extents: dict | None = None) -> list[dict]:
+def _row_geometry(record: dict, extents: dict | None = None,
+                  igv_extent_mm: float | None = None,
+                  ogv_extent_mm: float | None = None) -> list[dict]:
     """Posiciones axiales de cada fila (z_le/z_te en mm).
 
     `extents`: {(stage, kind): extensión_axial_mm} EXACTAS (de las
     secciones ya construidas — build_contract las pasa siempre). Sin
     ellas (uso de visualización) se estima con la cuerda del hub, que es
     una cota superior razonable de la cuerda axial.
+
+    `igv_extent_mm` / `ogv_extent_mm`: extensiones axiales del IGV (antes
+    del rotor 1, produce el pre-swirl α₁ que la física asume) y del OGV
+    (tras el último estátor, devuelve el flujo a axial — su pérdida ya la
+    contabiliza el meanline). None = fila ausente (compatibilidad con la
+    ruta de visualización).
     """
     rows = []
     z = 0.0
-    for s in record["stage_table"]:
+    st = record["stage_table"]
+    if igv_extent_mm is not None:
+        rows.append(dict(stage=-1, kind="igv", z_le=0.0,
+                         z_te=igv_extent_mm,
+                         chord_mm=st[0]["chord_stator_mm"],
+                         chord_axial_mm=igv_extent_mm))
+        z = igv_extent_mm * (1.0 + ROW_GAP_FRACTION)
+    for s in st:
         for kind in ("rotor", "stator"):
             c = s[f"chord_{kind}_mm"]
             if extents is not None:
@@ -98,27 +113,45 @@ def _row_geometry(record: dict, extents: dict | None = None) -> list[dict]:
             rows.append(dict(stage=s["stage"], kind=kind, z_le=z,
                              z_te=z + cz, chord_mm=c, chord_axial_mm=cz))
             z = z + cz + ROW_GAP_FRACTION * cz
+    if ogv_extent_mm is not None:
+        rows.append(dict(stage=len(st), kind="ogv", z_le=z,
+                         z_te=z + ogv_extent_mm,
+                         chord_mm=st[-1]["chord_stator_mm"],
+                         chord_axial_mm=ogv_extent_mm))
     return rows
 
 
-def annulus_lines(record: dict, extents: dict | None = None) -> dict:
+def _exit_height_mm(record: dict) -> float:
+    """Altura del annulus en la estación de salida (área congelada)."""
+    st = record["stage_table"]
+    r_m = st[-1]["r_mean_mm"]
+    if record.get("frozen") and record["frozen"]["areas"]:
+        A_exit = record["frozen"]["areas"][-1] * 1e6   # m² → mm²
+        return A_exit / (2 * math.pi * r_m)
+    return st[-1]["h_blade_mm"]
+
+
+def annulus_lines(record: dict, extents: dict | None = None,
+                  igv_extent_mm: float | None = None,
+                  ogv_extent_mm: float | None = None) -> dict:
     """Polilíneas hub/tip [[z_mm, r_mm], ...] de entrada a salida."""
-    rows = _row_geometry(record, extents)
+    rows = _row_geometry(record, extents, igv_extent_mm, ogv_extent_mm)
     st = record["stage_table"]
     hub, tip = [], []
+    if igv_extent_mm is not None:
+        # estación de entrada del IGV: annulus de la etapa 1 (const_mean)
+        hub.append([rows[0]["z_le"], st[0]["r_hub_mm"]])
+        tip.append([rows[0]["z_le"], st[0]["r_tip_mm"]])
     for s in st:
-        r_rows = [r for r in rows if r["stage"] == s["stage"]]
+        r_rows = [r for r in rows if r["stage"] == s["stage"]
+                  and r["kind"] in ("rotor", "stator")]
         z0 = r_rows[0]["z_le"]
         hub.append([z0, s["r_hub_mm"]])
         tip.append([z0, s["r_tip_mm"]])
     # estación de salida: annulus del área de salida a r_mean constante
     z_end = rows[-1]["z_te"]
     r_m = st[-1]["r_mean_mm"]
-    if record.get("frozen") and record["frozen"]["areas"]:
-        A_exit = record["frozen"]["areas"][-1] * 1e6   # m² → mm²
-        h_exit = A_exit / (2 * math.pi * r_m)
-    else:
-        h_exit = st[-1]["h_blade_mm"]
+    h_exit = _exit_height_mm(record)
     hub.append([z_end, r_m - 0.5 * h_exit])
     tip.append([z_end, r_m + 0.5 * h_exit])
     return dict(hub=hub, tip=tip,
@@ -220,6 +253,53 @@ def _row_sections(stage: dict, kind: str, omega: float,
 
 
 # ---------------------------------------------------------------------------
+# IGV y OGV — las filas que la física asume y que faltaban en el 3D
+# ---------------------------------------------------------------------------
+# El meanline arranca la etapa 1 con pre-swirl α₁ ("IGV implícito", su
+# pérdida se carga a la etapa 1) y quita el remolino de salida con una fila
+# OGV cuya pérdida y longitud sí contabiliza. Sin estas filas la máquina
+# impresa no puede cumplir los triángulos verificados (entrada axial real ≠
+# α₁ asumido) ni la condición de salida axial de M_exit. Ambas se modelan
+# como pseudo-etapas de estátor y reutilizan _row_sections tal cual:
+#   IGV:  flujo 0 → α₁(r) de la etapa 1 (fila aceleradora, giro free-vortex)
+#   OGV:  flujo α₁(r) de la última etapa → 0 (estátor difusor clásico)
+# Simplificación documentada: la incidencia/desviación de Lieblein/Carter
+# se derivó para cascadas difusoras. En el IGV (acelerador) la desviación
+# real es menor (gradiente favorable); Carter la sobreestima unos grados y
+# el metal queda sobre-girado ~4-6° respecto al ideal — el flujo entrega
+# al menos el pre-swirl asumido. Primera aproximación declarada.
+
+def _pseudo_stage_igv(record: dict) -> dict:
+    st0 = record["stage_table"][0]
+    return dict(
+        stage=-1,
+        Cx=st0["Cx"], r_mean_mm=st0["r_mean_mm"],
+        r_hub_mm=st0["r_hub_mm"], r_tip_mm=st0["r_tip_mm"],
+        alpha2_deg=0.0,                    # entrada del IGV: axial
+        alpha1_deg=st0["alpha1_deg"],      # salida: pre-swirl de la etapa 1
+        T0_in_K=st0["T0_in_K"],
+        n_blades_stator=st0["n_blades_stator"],
+        chord_stator_mm=st0["chord_stator_mm"],
+    )
+
+
+def _pseudo_stage_ogv(record: dict) -> dict:
+    sl = record["stage_table"][-1]
+    h_exit = _exit_height_mm(record)
+    r_m = sl["r_mean_mm"]
+    return dict(
+        stage=len(record["stage_table"]),
+        Cx=sl["Cx"], r_mean_mm=r_m,
+        r_hub_mm=r_m - 0.5 * h_exit, r_tip_mm=r_m + 0.5 * h_exit,
+        alpha2_deg=sl["alpha1_deg"],       # entrada: swirl residual α₁
+        alpha1_deg=0.0,                    # salida: axial
+        T0_in_K=sl["T0_out_K"],
+        n_blades_stator=sl["n_blades_stator"],
+        chord_stator_mm=sl["chord_stator_mm"],
+    )
+
+
+# ---------------------------------------------------------------------------
 # Condiciones de contorno CFD
 # ---------------------------------------------------------------------------
 def cfx_boundary_conditions(theta: np.ndarray, record: dict) -> dict:
@@ -283,11 +363,16 @@ def build_contract(theta: np.ndarray, record: dict, structural: dict | None,
             secs = _row_sections(s, kind, omega)
             secs_map[(s["stage"], kind)] = secs
             extents[(s["stage"], kind)] = _row_extent_mm(secs)
-    # 2º: colocación secuencial sin solapes
-    rows = _row_geometry(record, extents)
+    igv_secs = _row_sections(_pseudo_stage_igv(record), "stator", omega)
+    ogv_secs = _row_sections(_pseudo_stage_ogv(record), "stator", omega)
+    igv_ext = _row_extent_mm(igv_secs)
+    ogv_ext = _row_extent_mm(ogv_secs)
+    # 2º: colocación secuencial sin solapes (IGV al frente, OGV al final)
+    rows = _row_geometry(record, extents, igv_ext, ogv_ext)
     stages = []
     for s in record["stage_table"]:
-        r_rows = {r["kind"]: r for r in rows if r["stage"] == s["stage"]}
+        r_rows = {r["kind"]: r for r in rows if r["stage"] == s["stage"]
+                  and r["kind"] in ("rotor", "stator")}
         entry = dict(index=s["stage"])
         for kind in ("rotor", "stator"):
             rg = r_rows[kind]
@@ -299,6 +384,19 @@ def build_contract(theta: np.ndarray, record: dict, structural: dict | None,
                 sections=secs_map[(s["stage"], kind)],
             )
         stages.append(entry)
+
+    def _vane_row(kind: str, secs: list[dict], n_blades: int) -> dict:
+        rg = [r for r in rows if r["kind"] == kind][0]
+        return dict(
+            n_blades=n_blades,
+            z_le_mm=round(rg["z_le"], 3), z_te_mm=round(rg["z_te"], 3),
+            z_center_mm=round(0.5 * (rg["z_le"] + rg["z_te"]), 3),
+            rotating=False, sections=secs,
+        )
+
+    st_tab = record["stage_table"]
+    igv_row = _vane_row("igv", igv_secs, int(st_tab[0]["n_blades_stator"]))
+    ogv_row = _vane_row("ogv", ogv_secs, int(st_tab[-1]["n_blades_stator"]))
 
     struct_block = {}
     if structural:
@@ -343,8 +441,10 @@ def build_contract(theta: np.ndarray, record: dict, structural: dict | None,
                      M_rel_tip1=record["M_rel_tip1"],
                      min_SM=record["min_SM"], feasible=record["feasible"],
                      source=record.get("source", "meanline_L0")),
-        annulus=annulus_lines(record, extents),
+        annulus=annulus_lines(record, extents, igv_ext, ogv_ext),
         stages=stages,
+        igv=igv_row,
+        ogv=ogv_row,
         assembly=assembly,
         structural=struct_block,
         cfx_boundary_conditions=cfx_boundary_conditions(theta, record),
@@ -430,6 +530,14 @@ def generate(theta: np.ndarray, record: dict, outdir: str,
             w.writerow([f"anillo de carcasa etapa {st['index'] + 1}", 1,
                         st["index"] + 1,
                         f"r{s['r_tip_mm']:.1f}", mat])
+        s0, sl = record["stage_table"][0], record["stage_table"][-1]
+        w.writerow(["vano IGV", contract["igv"]["n_blades"], 0,
+                    f"c{s0['chord_stator_mm']:.1f} x h{s0['h_blade_mm']:.1f}",
+                    mat])
+        w.writerow(["vano OGV", contract["ogv"]["n_blades"],
+                    len(record["stage_table"]) + 1,
+                    f"c{sl['chord_stator_mm']:.1f} x h{sl['h_blade_mm']:.1f}",
+                    mat])
         w.writerow(["puerto de sangrado", 1, asm["bleed_stage"],
                     f"D{asm['bleed_hole_d_mm']:.0f}", mat])
         w.writerow(["perno de brida", 2 * asm["flange_bolt_count"], "-",

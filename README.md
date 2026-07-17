@@ -254,11 +254,13 @@ built with the Phy-CC v3 vane recipe: the camber **mid-surface** (one sheet
 of quads per blade, densified to ~25 span ribs) is thickened with
 `Voxels.voxMeshShell`, which offsets in the signed-distance domain and
 cannot self-intersect — LE/TE and tip come out rounded at ½·thickness.
-Blade roots sink into their body; free ends are pulled in by clearance +
-shell radius so the inflation does not eat the running gap. Axial row
-slots are computed from the **exact** rotated-camber envelope of every
-section (the hub runs at much lower stagger than the tip), so parts never
-overlap — a regression test guards this.
+The **IGV and OGV** rows the physics assumes are now in the contract and
+hang from the first/last casing rings. Blade roots sink into their body;
+free ends are pulled in by clearance + shell radius so the inflation does
+not eat the running gap. Axial row slots are computed from the **exact**
+rotated-camber envelope of every section (the hub runs at much lower
+stagger than the tip), so parts never overlap — a regression test guards
+this.
 
 ## Project Structure
 
@@ -414,6 +416,12 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
 
 ## History
 
+- **2026-07-17 — IGV/OGV**: the guide-vane rows the physics assumes now
+  exist in the contract and the 3D parts — the IGV (axial → α₁
+  pre-swirl, ahead of rotor 1) hangs from the first casing ring and the
+  OGV (residual α₁ → axial) from the last one; Carter deviation
+  generalized to follow the camber sign (χ₂ = β₂ − sgn(θ)·δ) so
+  accelerating rows overturn the metal past the target flow angle.
 - **2026-07-16 — Reynolds correction**: per-row f_Re on the friction
   losses (Koch & Smith 1976 nominal at Re_c = 10⁶, Wassell/Schäffler
   exponent, laminar branch below 2×10⁵, no credit above 10⁶ — NASA

@@ -71,31 +71,18 @@ namespace AxialCompressorDesigner
             {
                 int iStage = oStage.GetProperty("index").GetInt32();
                 foreach (string strKind in new[] { "rotor", "stator" })
-                {
-                    JsonElement oRow = oStage.GetProperty(strKind);
-                    var row = new RowParams
-                    {
-                        StageIndex = iStage,
-                        Rotating = oRow.GetProperty("rotating").GetBoolean(),
-                        BladeCount = oRow.GetProperty("n_blades").GetInt32(),
-                        ZCenterMm = (float)oRow.GetProperty("z_center_mm").GetDouble(),
-                        ZLeMm = (float)oRow.GetProperty("z_le_mm").GetDouble(),
-                        ZTeMm = (float)oRow.GetProperty("z_te_mm").GetDouble(),
-                    };
-                    foreach (JsonElement oSec in oRow.GetProperty("sections").EnumerateArray())
-                    {
-                        row.Sections.Add(new SectionParams
-                        {
-                            RMm = (float)oSec.GetProperty("r_mm").GetDouble(),
-                            ChordMm = (float)oSec.GetProperty("chord_mm").GetDouble(),
-                            StaggerDeg = (float)oSec.GetProperty("stagger_deg").GetDouble(),
-                            ThicknessMm = (float)oSec.GetProperty("thickness_mm").GetDouble(),
-                            CamberPoints = afPolyline(oSec.GetProperty("camber_points")),
-                        });
-                    }
-                    p.Rows.Add(row);
-                }
+                    p.Rows.Add(rowFromJson(oStage.GetProperty(strKind),
+                                           iStage));
             }
+
+            // Guide-vane rows (contracts >= 2026-07-16; optional for
+            // backward compatibility with older axial_compressor.json)
+            if (oRoot.TryGetProperty("igv", out JsonElement oIgv)
+                && oIgv.ValueKind == JsonValueKind.Object)
+                p.IgvRow = rowFromJson(oIgv, -1);
+            if (oRoot.TryGetProperty("ogv", out JsonElement oOgv)
+                && oOgv.ValueKind == JsonValueKind.Object)
+                p.OgvRow = rowFromJson(oOgv, p.Rows.Count / 2);
 
             string strName = outputName;
             if (strName == null)
@@ -106,6 +93,32 @@ namespace AxialCompressorDesigner
             }
             p.OutputName = strName;
             return p;
+        }
+
+        static RowParams rowFromJson(JsonElement oRow, int iStage)
+        {
+            var row = new RowParams
+            {
+                StageIndex = iStage,
+                Rotating = oRow.GetProperty("rotating").GetBoolean(),
+                BladeCount = oRow.GetProperty("n_blades").GetInt32(),
+                ZCenterMm = (float)oRow.GetProperty("z_center_mm").GetDouble(),
+                ZLeMm = (float)oRow.GetProperty("z_le_mm").GetDouble(),
+                ZTeMm = (float)oRow.GetProperty("z_te_mm").GetDouble(),
+            };
+            foreach (JsonElement oSec in oRow.GetProperty("sections").EnumerateArray())
+            {
+                var sec = new SectionParams
+                {
+                    RMm = (float)oSec.GetProperty("r_mm").GetDouble(),
+                    ChordMm = (float)oSec.GetProperty("chord_mm").GetDouble(),
+                    StaggerDeg = (float)oSec.GetProperty("stagger_deg").GetDouble(),
+                    ThicknessMm = (float)oSec.GetProperty("thickness_mm").GetDouble(),
+                    CamberPoints = afPolyline(oSec.GetProperty("camber_points")),
+                };
+                row.Sections.Add(sec);
+            }
+            return row;
         }
 
         static float fOpt(JsonElement o, string strName, float fDefault)

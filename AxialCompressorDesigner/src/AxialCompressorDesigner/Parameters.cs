@@ -16,7 +16,7 @@ using System.Collections.Generic;
 
 namespace AxialCompressorDesigner
 {
-    /// <summary>One blade section at a span station (camber mid-surface).</summary>
+    /// <summary>One blade section at a span station.</summary>
     public sealed class SectionParams
     {
         public float RMm;                 // stacking radius of this section
@@ -83,6 +83,13 @@ namespace AxialCompressorDesigner
 
         public List<RowParams> Rows = new List<RowParams>();
 
+        // Optional guide-vane rows (casing-mounted, non-rotating). The
+        // physics assumes stage-1 pre-swirl (implicit IGV) and an OGV that
+        // returns the exit flow to axial; contracts >= 2026-07-16 carry
+        // both rows so the printed machine matches the verified triangles.
+        public RowParams IgvRow;
+        public RowParams OgvRow;
+
         /// <summary>Returns an error message, or null when valid.</summary>
         public string Validate()
         {
@@ -96,17 +103,37 @@ namespace AxialCompressorDesigner
                 return "VoxelSizeMm too small";
             foreach (RowParams row in Rows)
             {
-                if (row.BladeCount < 3)
-                    return $"row stage {row.StageIndex}: BladeCount < 3";
-                if (row.Sections.Count < 2)
-                    return $"row stage {row.StageIndex}: needs >= 2 sections";
-                int n = row.Sections[0].CamberPoints.Length;
-                foreach (SectionParams s in row.Sections)
-                    if (s.CamberPoints == null || s.CamberPoints.Length != n)
-                        return $"row stage {row.StageIndex}: camber point " +
-                               "count differs between sections (loft needs " +
-                               "equal counts)";
+                string strErr = strValidateRow(row);
+                if (strErr != null)
+                    return strErr;
             }
+            if (IgvRow != null)
+            {
+                string strErr = strValidateRow(IgvRow);
+                if (strErr != null)
+                    return "IGV: " + strErr;
+            }
+            if (OgvRow != null)
+            {
+                string strErr = strValidateRow(OgvRow);
+                if (strErr != null)
+                    return "OGV: " + strErr;
+            }
+            return null;
+        }
+
+        static string strValidateRow(RowParams row)
+        {
+            if (row.BladeCount < 3)
+                return $"row stage {row.StageIndex}: BladeCount < 3";
+            if (row.Sections.Count < 2)
+                return $"row stage {row.StageIndex}: needs >= 2 sections";
+            int n = row.Sections[0].CamberPoints.Length;
+            foreach (SectionParams s in row.Sections)
+                if (s.CamberPoints == null || s.CamberPoints.Length != n)
+                    return $"row stage {row.StageIndex}: camber point " +
+                           "count differs between sections (loft needs " +
+                           "equal counts)";
             return null;
         }
     }

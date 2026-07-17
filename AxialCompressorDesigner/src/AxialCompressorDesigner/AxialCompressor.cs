@@ -87,6 +87,14 @@ namespace AxialCompressorDesigner
             }
             vox += BladeRow.voxBuildRow(m_aStators[i], m_p.TipClearanceMm,
                                         m_p.RootSinkMm, m_fMinThick);
+            // guide vanes: the IGV hangs from the first ring, the OGV
+            // from the last one (casing-mounted like any stator row)
+            if (i == 0 && m_p.IgvRow != null)
+                vox += BladeRow.voxBuildRow(m_p.IgvRow, m_p.TipClearanceMm,
+                                            m_p.RootSinkMm, m_fMinThick);
+            if (i == nStages - 1 && m_p.OgvRow != null)
+                vox += BladeRow.voxBuildRow(m_p.OgvRow, m_p.TipClearanceMm,
+                                            m_p.RootSinkMm, m_fMinThick);
             return vox;
         }
 

@@ -214,12 +214,33 @@ check("free vortex: β1 metálico crece hub→punta (rotor)", ok_fv)
 check("estátor con stagger negativo (convención firmada)",
       all(s["stagger_deg"] < 0
           for s in contract["stages"][0]["stator"]["sections"]))
+# IGV/OGV: las filas que la física asume ahora existen en el contrato
+igv, ogv = contract["igv"], contract["ogv"]
+a1_st0 = rec["stage_table"][0]["alpha1_deg"]
+a1_last = rec["stage_table"][-1]["alpha1_deg"]
+mid_igv = igv["sections"][len(igv["sections"]) // 2]
+mid_ogv = ogv["sections"][len(ogv["sections"]) // 2]
+check("IGV: entrada axial y salida sobre-girada más allá de α1 (Carter)",
+      abs(mid_igv["metal_in_deg"]) < 3.0
+      and abs(mid_igv["metal_out_deg"]) > a1_st0 - 1.0,
+      f"χ2={mid_igv['metal_out_deg']:.1f}° vs α1={a1_st0:.1f}°")
+check("OGV: entrada ≈ α1 residual y salida ≈ axial (± desviación)",
+      abs(abs(mid_ogv["metal_in_deg"]) - a1_last) < 6.0
+      and abs(mid_ogv["metal_out_deg"]) < 12.0,
+      f"χ1={mid_ogv['metal_in_deg']:.1f}° vs α1={a1_last:.1f}°")
+check("IGV/OGV: mismas invariantes de sección que las etapas",
+      all(len(s["points"]) == bp.N_POINTS for s in igv["sections"])
+      and len({len(s["camber_points"])
+               for s in igv["sections"] + ogv["sections"]}) == 1
+      and not igv["rotating"] and not ogv["rotating"])
+
 # sin solape axial entre filas consecutivas (la extensión del contrato ya
 # incluye la inflación del shell ±½t — regresión del defecto visto en STL)
-row_seq = []
+row_seq = [contract["igv"]]
 for st in contract["stages"]:
     row_seq += [st["rotor"], st["stator"]]
-check("filas sin solape axial (incluida inflación del shell)",
+row_seq.append(contract["ogv"])
+check("filas sin solape axial (IGV→etapas→OGV, incl. inflación del shell)",
       all(row_seq[i + 1]["z_le_mm"] >= row_seq[i]["z_te_mm"] - 1e-6
           for i in range(len(row_seq) - 1)))
 # la extensión axial de cada sección cabe en su hueco

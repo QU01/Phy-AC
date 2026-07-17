@@ -377,6 +377,21 @@ at the profile centroid, so the naive mean-stagger placement overlapped
 rotor and stator by up to ~4.5 mm (found in STL review; now
 regression-tested).
 
+**IGV and OGV (2026-07-16).** The meanline starts stage 1 with pre-swirl
+α₁ ("implicit IGV", its loss charged to stage 1) and removes the exit
+swirl with an OGV row whose loss and length it does count — but neither
+row existed in the geometry, so the printed machine could not meet the
+verified triangles (real axial inlet ≠ assumed α₁) nor the axial-exit
+condition behind M_exit. The contract now carries both as top-level
+`igv`/`ogv` rows (same section schema as stators, built by the same
+free-vortex machinery): the IGV turns 0 → α₁(r) (accelerating row) ahead
+of rotor 1, the OGV turns α₁(r) → 0 after the last stator. Carter's
+deviation is generalized to follow the camber sign (metal always turns
+PAST the target flow angle: χ₂ = β₂ − sgn(θ)·δ) — for the accelerating
+IGV, Carter overpredicts δ by a few degrees (declared first-order
+approximation). Layer 5c hangs the IGV from the first casing ring and
+the OGV from the last one.
+
 ### 8.2 Layer 5c (C#/PicoGK — real machine construction)
 
 Blade rows use the **Phy-CC v3 vane recipe**: mesh only the camber
@@ -395,7 +410,8 @@ and the next rotor LE):
   over the shaft.
 * **StatorRing i**: casing shell segment + stator vanes; end rings carry
   the bolted flanges (12 × M6 on the mid bolt circle); the bleed-stage
-  ring carries the **bleed port** (radial boss + through hole).
+  ring carries the **bleed port** (radial boss + through hole); the
+  first/last rings additionally carry the **IGV/OGV** vanes.
 * Union views (Rotor / Casing / Assembly) for inspection.
 
 A bill of materials (`bom.csv`) lists every part with quantities.

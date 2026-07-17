@@ -146,8 +146,13 @@ def metal_angles(beta1_flow: float, beta2_flow: float, sigma: float,
                  iters: int = 6) -> dict:
     """Ángulos metálicos por punto fijo (grados, desde el eje).
 
-    χ1 = β1 − i*(θ),  χ2 = β2 − δ(θ, γ),  θ = χ1 − χ2,  γ = (χ1+χ2)/2.
-    Converge en 3-4 iteraciones para filas convencionales.
+    χ1 = β1 − i*(θ),  χ2 = β2 − sgn(θ)·δ(θ, γ),  θ = χ1 − χ2,
+    γ = (χ1+χ2)/2. Converge en 3-4 iteraciones para filas convencionales.
+
+    El signo de la desviación sigue al del camber: el flujo siempre gira
+    MENOS que el metal, así que en filas difusoras (θ>0, rotor/estátor)
+    χ2 = β2 − δ y en filas aceleradoras (θ<0, IGV) χ2 = β2 + δ — el
+    metal debe girar MÁS allá del ángulo de flujo objetivo en ambos casos.
     """
     chi1, chi2 = beta1_flow, beta2_flow
     i_star = dev = 0.0
@@ -158,7 +163,7 @@ def metal_angles(beta1_flow: float, beta2_flow: float, sigma: float,
                                   profile)
         dev = carter_deviation(camber, stagger, sigma)
         chi1_new = beta1_flow - i_star
-        chi2_new = beta2_flow - dev
+        chi2_new = beta2_flow - math.copysign(dev, camber)
         if abs(chi1_new - chi1) < 1e-4 and abs(chi2_new - chi2) < 1e-4:
             chi1, chi2 = chi1_new, chi2_new
             break

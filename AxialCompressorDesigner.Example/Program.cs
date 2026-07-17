@@ -48,7 +48,10 @@ namespace AxialCompressorDesigner.Example
             string strFilter = args.Length > 3 ? args[3] : null;
 
             Console.WriteLine($"[PhyAC] {strJson}");
-            Console.WriteLine($"        {p.Rows.Count} filas, hub " +
+            int nExtra = (p.IgvRow != null ? 1 : 0) + (p.OgvRow != null ? 1 : 0);
+            Console.WriteLine($"        {p.Rows.Count} filas" +
+                (nExtra > 0 ? $" + {nExtra} guide vanes (IGV/OGV)" : "") +
+                ", hub " +
                 $"{p.HubLine[0][1]:0.#}→{p.HubLine[^1][1]:0.#} mm, tip " +
                 $"{p.TipLine[0][1]:0.#}→{p.TipLine[^1][1]:0.#} mm, " +
                 $"holgura {p.TipClearanceMm:0.##} mm, voxel {p.VoxelSizeMm} mm" +

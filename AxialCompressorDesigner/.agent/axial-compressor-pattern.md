@@ -30,12 +30,14 @@ autointersecan y OpenVDB lo renderiza como esquirlas. La receta robusta
 clampeada; stubs de montaje en ambos extremos) menos el cilindro del
 barreno (`DrumInnerRadiusMm`, del bloque structural del contrato).
 
-## 3. Carcasa con estátores colgados
+## 3. Carcasa con estátores colgados (+ IGV/OGV)
 
 Revolución exterior = línea de tip + holgura + espesor de pared; cavidad
 interior = tip + holgura EXTENDIDA axialmente más allá de ambos extremos
 (deja el casco abierto, annulus pasante). Los estátores se unionan a la
-pared interior.
+pared interior. Los guide vanes del contrato (`igv`/`ogv` — las filas que
+la física asume: pre-swirl α₁ de entrada y salida axial) cuelgan del
+PRIMER y ÚLTIMO anillo respectivamente, como cualquier estátor.
 
 ## Contrato
 
