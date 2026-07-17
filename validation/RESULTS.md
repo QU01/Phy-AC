@@ -8,10 +8,10 @@ Metodología: el θ de cada máquina reproduce su annulus (r_tip vía φ1) y su 
 
 | Máquina | Plano | PR modelo | PR medido | ΔPR | η modelo | η medida | Δη [pts] | PR | η |
 |---|---|---|---|---|---|---|---|---|---|
-| NASA Stage 35 | etapa completa (t-t) | 1.836 | 1.820 | +0.87% | 0.841 (eta_isen) | 0.828 | +1.3 | PASS | PASS |
-| NASA Rotor 37 | rotor aislado (t-t) | 2.069 | 2.106 | -1.76% | 0.854 (eta_isen) | 0.877 | -2.3 | PASS | PASS |
-| NASA Rotor 67 | rotor aislado (t-t) | 1.610 | 1.630 | -1.22% | 0.905 (eta_isen) | 0.930 | -2.5 | PASS | PASS |
-| GE/NASA E3 HPC (10 etapas) | máquina multietapa (t-t) | 22.000 | 23.000 | -4.35% | 0.887 (eta_poly) | 0.900 | -1.3 | PASS | PASS |
+| NASA Stage 35 | etapa completa (t-t) | 1.834 | 1.820 | +0.79% | 0.840 (eta_isen) | 0.828 | +1.2 | PASS | PASS |
+| NASA Rotor 37 | rotor aislado (t-t) | 2.082 | 2.106 | -1.12% | 0.862 (eta_isen) | 0.877 | -1.5 | PASS | PASS |
+| NASA Rotor 67 | rotor aislado (t-t) | 1.619 | 1.630 | -0.68% | 0.916 (eta_isen) | 0.930 | -1.4 | PASS | PASS |
+| GE/NASA E3 HPC (10 etapas) | máquina multietapa (t-t) | 21.722 | 23.000 | -5.55% | 0.884 (eta_poly) | 0.900 | -1.6 | PASS | PASS |
 
 ### Detalle por máquina
 
@@ -43,7 +43,7 @@ Notas: Multietapa con estátores variables y φ/Rx variables por etapa que la pa
 
 | Ancla | Estado | Detalle |
 |---|---|---|
-| REF_AX4 (4 etapas, θ de referencia del módulo) | PASS | PR=2.7056 (esp. 2.7056); eta_poly=0.8837 (esp. 0.8837); eta_isen=0.8665 (esp. 0.8665); T0_out=397.5317 (esp. 397.5317); U_tip=361.7974 (esp. 361.7974) |
+| REF_AX4 (4 etapas, θ de referencia del módulo) | PASS | PR=2.7160 (esp. 2.7160); eta_poly=0.8871 (esp. 0.8871); eta_isen=0.8704 (esp. 0.8704); T0_out=397.5317 (esp. 397.5317); U_tip=361.7974 (esp. 361.7974) |
 
 ## Cómo añadir una máquina
 

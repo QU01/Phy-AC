@@ -186,7 +186,7 @@ Salidas de la fase C#: un STL por pieza más las vistas de unión
 | `AxialCompressorDesigner/` | 5c | Librería C# + PicoGK: importa `axial_compressor.json` (`PhyACImport`) y construye eje, discos-álabe y anillos de carcasa como STL imprimibles. |
 | `AxialCompressorDesigner.Example/` | 5c | Ejecutable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | producto | CLI end-to-end: espec → diseño → geometría → informe → dataset [→ STLs vía --stl/--voxel]. |
-| `test_phyac.py` | VV&UQ | Suite de verificación: 57 checks (triángulos, conservación, continuidad de g, perfiles, contrato, solver de disco, núcleo del optimizador, regresión de solapes). |
+| `test_phyac.py` | VV&UQ | Suite de verificación: 63 checks (triángulos, conservación, continuidad de g, perfiles, contrato, solver de disco, núcleo del optimizador, regresión de solapes). |
 | `validation/` | VV&UQ | Campaña de validación vs NASA Stage 35, Rotor 37/67 y GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## API Python (capas 1–5b)
@@ -288,7 +288,7 @@ Licencias de terceros: ver [README.md](README.md#third-party-licenses).
 ## Verificación y validación
 
 ```bash
-python test_phyac.py               # verificación: 57 checks
+python test_phyac.py               # verificación: 63 checks
 python validation/validate.py      # validación: máquinas NASA → RESULTS.md
 python data_pipeline.py            # anclas de datos: rebuild + SHA-256
 ```
@@ -336,6 +336,14 @@ predicción de pérdidas → (η, PR). Tabla vigente en
 
 ## Historia
 
+- **2026-07-17 — holgura de punta por fila**: ε pasa a ser ABSOLUTA en
+  mm (crece relativa a los álabes traseros que encogen — el efecto
+  físico que un ε/h fijo borraba), con los regímenes de Sakulkaew 2013
+  (óptimo bajo 0.8%, ~1.6 pts/1% lineal, punta descargada sobre 3.4%);
+  física, contrato de geometría y validación comparten la misma ε (la
+  holgura de marcha publicada de cada máquina NASA). Recalibración
+  global documentada K_ENDWALL 1.0→1.4; el |Δη| máximo de las cuatro
+  máquinas baja de 2.5 a 1.6 pts; REF_AX4 re-congelada.
 - **2026-07-17 — álabes de perfil sólido**: la capa 5c hace loft del
   contorno cerrado de cada sección (`points` — la distribución de
   espesor NACA-65/DCA real) a un sólido estanco por álabe, conservando

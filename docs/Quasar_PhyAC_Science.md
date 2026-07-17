@@ -130,9 +130,25 @@ rotor-exit station** (needed by the L1 passage, §3).
   37/67 (the real passage shock is oblique; the normal-shock model
   overestimates).
 
-* **Tip clearance.** $\Delta\eta = 2.0\,(\varepsilon/h)$ with
-  $\varepsilon/h = 0.015$ — the classical 2–3% η per 1% clearance
-  sensitivity.
+* **Tip clearance (per-row, 2026-07-17).** The clearance is an ABSOLUTE
+  $\varepsilon$ in mm (`TIP_CLEARANCE_MM`, default 0.4, env-overridable
+  via `PHYAC_TIP_CLEARANCE_MM`) — mechanically set by tolerances and
+  thermal growth, so $\varepsilon/h$ **grows toward the rear stages** as
+  h falls, which a fixed ratio erased. Per rotor row,
+  $\Delta h_{cl}/\Delta h_0 = f(\varepsilon/h)$, a continuous piecewise
+  ramp with the regimes of Sakulkaew, Tan et al. (2013): half slope below
+  $\varepsilon/h \approx 0.8\%$ (clearance optimum — casing shear
+  competes with leakage), linear slope `K_TIP_CLEARANCE` = 1.8 in
+  0.8–3.4% (the measured ~1.6 pts η per 1%), half slope above (tip
+  unloads); $\varepsilon/h$ clamped at 8% for degenerate θ (g stays
+  continuous). Mechanism per Denton (1993) / Storer & Cumpsty (1991-94).
+  The geometry contract emits **the same** $\varepsilon$
+  (`annulus.tip_clearance_mm`), and the validation injects each NASA
+  machine's published running clearance. Removing the old uniform 1.5%
+  debit required a documented **global** recalibration of
+  `K_ENDWALL` 1.0 → 1.4 (Howell's simple $C_{Da}$ underpredicts endwall
+  loss — Koch & Smith 1976 — and the uniform debit was silently
+  absorbing it); no per-machine tuning.
 
 * **Reynolds correction (2026-07-16).** Profile and endwall losses (the
   friction-driven terms — not shock, not clearance) are multiplied by
@@ -486,6 +502,15 @@ the machinery is the same.
 - Schäffler, A. (1980). *Experimental and Analytical Investigation of the
   Effects of Reynolds Number and Blade Surface Roughness on Multistage
   Axial Flow Compressors*. ASME J. Eng. Power 102 (79-GT-2).
+- Denton, J. D. (1993). *Loss Mechanisms in Turbomachines*. ASME
+  J. Turbomach. 115(4) (IGTI Scholar Lecture).
+- Storer, J. A., & Cumpsty, N. A. (1991). *Tip Leakage Flow in Axial
+  Compressors*. ASME J. Turbomach. 113(2); and (1994) *An Approximate
+  Analysis and Prediction Method for Tip Clearance Loss in Axial
+  Compressors*, 116(4).
+- Sakulkaew, S., Tan, C. S., Donahoo, E., Cornelius, C., & Montgomery,
+  M. (2013). *Compressor Efficiency Variation with Rotor Tip Gap from
+  Vanishing to Large Clearance*. ASME J. Turbomach. 135(3).
 - Carter, A. D. S. (1950). *The Low Speed Performance of Related
   Aerofoils in Cascade*. ARC CP-29.
 - Aungier, R. H. (2003). *Axial-Flow Compressors: A Strategy for

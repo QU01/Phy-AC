@@ -110,9 +110,18 @@ def model_metrics(rec: dict, spec: dict, kind: str) -> dict:
 
 
 def run_machine(m: dict) -> dict:
-    theta = build_theta(m["spec"], m["measured"])
-    rec = evaluate(theta, fidelity=Fidelity.L0, use_cache=False,
-                   calibrate=False)
+    # Inyecta la holgura de punta PUBLICADA de la máquina (ε absoluta en
+    # mm — parámetro de módulo del meanline) y restaura siempre.
+    import physics_core as _pc
+    eps_saved = _pc.TIP_CLEARANCE_MM
+    if "eps_tip_mm" in m:
+        _pc.TIP_CLEARANCE_MM = float(m["eps_tip_mm"])
+    try:
+        theta = build_theta(m["spec"], m["measured"])
+        rec = evaluate(theta, fidelity=Fidelity.L0, use_cache=False,
+                       calibrate=False)
+    finally:
+        _pc.TIP_CLEARANCE_MM = eps_saved
     model = model_metrics(rec, m["spec"], m["kind"])
 
     meas = m["measured"]

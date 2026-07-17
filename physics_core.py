@@ -84,8 +84,19 @@ RE_REF = 1.0e6            # Re de cuerda nominal de las correlaciones de
 RE_LAM = 2.0e5            # frontera de separación laminar (Wassell 1968)
 
 # --- Parámetros del meanline (calibrables; ver docs/VALIDATION.md) --------
-TIP_CLEARANCE_RATIO = 0.015   # ε/h holgura de punta relativa (rotor)
-K_TIP_CLEARANCE = 2.0         # Δη ≈ K·(ε/h) — sensibilidad típica 2-3 %/1 %
+TIP_CLEARANCE_MM = float(os.environ.get("PHYAC_TIP_CLEARANCE_MM", "0.4"))
+#   ε holgura de punta ABSOLUTA del rotor [mm]. En máquinas reales ε la
+#   fijan tolerancias mecánicas y crecimiento térmico, NO la altura del
+#   álabe — por eso ε/h CRECE hacia las etapas traseras (h cae con la
+#   compresión), el efecto físico que un ε/h fijo borraba. 0.4 mm es
+#   típico de compresor pequeño; la validación inyecta el ε publicado de
+#   cada máquina (validation/machines.py) y el contrato de geometría
+#   emite ESTE MISMO valor (annulus.tip_clearance_mm) — física y pieza
+#   impresa comparten la holgura.
+K_TIP_CLEARANCE = 1.8         # pendiente Δη/Δ(ε/h) del tramo lineal
+EPS_H_KNEE = 0.008            # rodilla inferior: óptimo de holgura
+EPS_H_HIGH = 0.034            # fin del tramo lineal (punta descargada)
+EPS_H_MAX = 0.08              # clamp de ε/h para θ degenerado (g continuo)
 BLOCKAGE_INIT = 0.98          # KB de la primera etapa
 BLOCKAGE_PER_STAGE = 0.005    # crecimiento de bloqueo endwall por etapa
 ANNULUS_MODE = "const_mean"   # const_hub | const_mean | const_tip
@@ -93,7 +104,17 @@ STATOR_AR_FACTOR = 1.10       # AR_estator = 1.10 · AR_rotor
 ROW_GAP_FRACTION = 0.25       # gap axial inter-fila / cuerda
 CHORD_TAPER = 0.85            # c_tip/c_hub (usado por la capa 5a)
 K_PROFILE = 1.0               # multiplicador de pérdida de perfil (calibración)
-K_ENDWALL = 1.0               # multiplicador de pérdida secundaria/endwall
+K_ENDWALL = 1.4               # multiplicador de pérdida secundaria/endwall.
+#                               Recalibrado 2026-07-17 junto con el modelo
+#                               de holgura por fila: el débito uniforme
+#                               viejo (ε/h=1.5% fijo ≈ 3 pts) absorbía en
+#                               silencio el endwall que el CDa simple de
+#                               Howell subestima (Koch & Smith 1976
+#                               atribuyen al endwall bastante más). Con la
+#                               ε publicada de cada máquina, K=1.4 deja
+#                               las 4 máquinas NASA en tolerancia
+#                               (validation/RESULTS.md) sin ajuste por
+#                               máquina individual.
 K_SHOCK = 0.70                # multiplicador de pérdida de choque. El
 #                               choque real del pasaje es OBLICUO; el modelo
 #                               de choque normal al Mach de entrada
@@ -286,6 +307,32 @@ def _re_correction(re_c: float | None) -> float:
     if re_c >= RE_LAM:
         return (RE_REF / re_c) ** 0.2
     return (RE_REF / RE_LAM) ** 0.2 * (RE_LAM / re_c) ** 0.5
+
+
+def _clearance_loss_frac(eps_over_h: float) -> float:
+    """Fracción del trabajo de etapa Δh0 perdida por fuga de punta (rotor).
+
+    Mecanismo: el gasto de fuga cruza el hueco impulsado por la carga del
+    álabe y se mezcla desalineado con el pasaje (Denton 1993, ζ_TL;
+    Storer & Cumpsty 1991/94: pérdida ∝ gasto de fuga × desalineación).
+    Regímenes medidos por Sakulkaew, Tan et al. (2013, J. Turbomach.):
+    bajo ε/h ≈ 0.8% la sensibilidad cae (cizalladura de carcasa compite
+    con la fuga — existe un óptimo de holgura), tramo LINEAL en
+    0.8–3.4% con ~1.6 pts de η por 1% de ε/h, y sensibilidad decreciente
+    por encima (la punta se descarga). Se modela como rampa a tramos con
+    pendiente K_TIP_CLEARANCE en el tramo lineal y ½·K fuera de él —
+    CONTINUA y monótona (la dominancia de Deb exige g continuo), con
+    ε/h clampeado a EPS_H_MAX para θ degenerados.
+    """
+    k = K_TIP_CLEARANCE
+    e = min(max(eps_over_h, 0.0), EPS_H_MAX)
+    if e <= EPS_H_KNEE:
+        return 0.5 * k * e
+    f = 0.5 * k * EPS_H_KNEE
+    if e <= EPS_H_HIGH:
+        return f + k * (e - EPS_H_KNEE)
+    f += k * (EPS_H_HIGH - EPS_H_KNEE)
+    return f + 0.5 * k * (e - EPS_H_HIGH)
 
 
 def _lieblein_theta_c(deq: float) -> float:
@@ -584,8 +631,12 @@ def _meanline(theta: np.ndarray, rpm: float | None = None,
             inc_deg = math.degrees(b1) - b1_design
             bucket = 1.0 + (inc_deg / 10.0) ** 2
             dh_r *= min(bucket, 4.0)
-        # Holgura de punta (solo rotor)
-        dh_cl = K_TIP_CLEARANCE * TIP_CLEARANCE_RATIO * dh0 if dh0 > 0 else 0.0
+        # Holgura de punta (solo rotor): ε ABSOLUTA en mm ⇒ ε/h crece
+        # hacia las etapas traseras (h cae) — pérdida por fila, no débito
+        # uniforme. Modelo por tramos de _clearance_loss_frac.
+        eps_h = min(TIP_CLEARANCE_MM / max(h_blade * 1000.0, 1e-3),
+                    EPS_H_MAX)
+        dh_cl = _clearance_loss_frac(eps_h) * dh0 if dh0 > 0 else 0.0
 
         dh_loss_i = dh_r + dh_s + dh_cl
         eta_tt = float(np.clip((dh0 - dh_loss_i) / max(dh0, 1e-3), 0.05, 1.0)) \
@@ -635,6 +686,7 @@ def _meanline(theta: np.ndarray, rpm: float | None = None,
             P0_in_Pa=P0, P0_out_Pa=P0_out_i, dh0=dh0, Ch=Ch, SM=SM_i,
             incidence_deg=inc_deg, wdf=wdf,
             losses=dict(rotor=dh_r, stator=dh_s, clearance=dh_cl,
+                        eps_over_h=eps_h,
                         omega_rotor=om_r, omega_stator=om_s,
                         deq_rotor=det_r["deq"], deq_stator=det_s["deq"],
                         Re_rotor=Re_r, Re_stator=Re_s,
@@ -749,6 +801,7 @@ def _meanline(theta: np.ndarray, rpm: float | None = None,
         Mu=_safe(Mu, 0.0), r_tip_in_mm=_safe(r_tip * 1000, 0.0),
         n_stages=n_st, length_mm=_safe(length_m * 1000, 0.0),
         AN2_m2_rpm2=_safe(AN2, 0.0),
+        eps_tip_mm=TIP_CLEARANCE_MM,
         M_rel_tip1=_safe(M_rel_tip1, 9.9), M_exit=_safe(M_exit, 9.9),
         max_DF_rotor=_safe(max_DF_r, 9.9), max_DF_stator=_safe(max_DF_s, 9.9),
         min_dehaller_rotor=_safe(min_dh_r, 0.0),

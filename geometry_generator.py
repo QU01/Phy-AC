@@ -33,7 +33,7 @@ import os
 import numpy as np
 
 from physics_core import (CP, GAMMA, RGAS, ROW_GAP_FRACTION,
-                          TIP_CLEARANCE_RATIO, VAR_NAMES)
+                          TIP_CLEARANCE_MM, VAR_NAMES)
 from blade_profiles import (N_POINTS, _circular_arc_camber, dca_profile,
                             metal_angles, naca65_profile)
 
@@ -154,8 +154,9 @@ def annulus_lines(record: dict, extents: dict | None = None,
     h_exit = _exit_height_mm(record)
     hub.append([z_end, r_m - 0.5 * h_exit])
     tip.append([z_end, r_m + 0.5 * h_exit])
-    return dict(hub=hub, tip=tip,
-                tip_clearance_mm=TIP_CLEARANCE_RATIO * st[0]["h_blade_mm"])
+    # la MISMA ε absoluta que usó la física (ε constante en mm — un solo
+    # valor sirve para todas las filas de la capa 5c)
+    return dict(hub=hub, tip=tip, tip_clearance_mm=TIP_CLEARANCE_MM)
 
 
 # ---------------------------------------------------------------------------

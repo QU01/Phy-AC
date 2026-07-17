@@ -182,7 +182,7 @@ C# phase outputs: one STL per part plus the union views (binary, in mm).
 | `AxialCompressorDesigner/` | 5c | C# library + PicoGK: imports `axial_compressor.json` (`PhyACImport`) and builds shaft, bladed discs and casing rings as printable STLs. |
 | `AxialCompressorDesigner.Example/` | 5c | Executable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | product | End-to-end CLI: spec → design → geometry → report → dataset [→ STLs via --stl/--voxel]. |
-| `test_phyac.py` | VV&UQ | Verification suite: 57 checks (triangles, conservation, g continuity, profiles, contract, disc solver, optimizer core, overlap regression). |
+| `test_phyac.py` | VV&UQ | Verification suite: 63 checks (triangles, conservation, g continuity, profiles, contract, disc solver, optimizer core, overlap regression). |
 | `validation/` | VV&UQ | Validation campaign vs NASA Stage 35, Rotor 37/67 and GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## Python API (layers 1–5b)
@@ -281,7 +281,7 @@ Phy-AC/
 ├── report_generator.py                   layer 5b  self-contained HTML report
 ├── visualization.py                      layer 5b  matplotlib figures (optional)
 ├── phyac_cli.py                          end-to-end CLI (spec → design → report [→ STLs])
-├── test_phyac.py                         verification suite (57 checks)
+├── test_phyac.py                         verification suite (63 checks)
 │
 ├── validation/                           validation campaign (machines.py, validate.py)
 ├── data/                                 in-repo correlation anchors + manifest.json
@@ -366,7 +366,7 @@ independent voxel fields built in the same `Library.Go` session.
 ## Verification and Validation
 
 ```bash
-python test_phyac.py               # verification: 57 checks
+python test_phyac.py               # verification: 63 checks
 python validation/validate.py      # validation: NASA machines → RESULTS.md
 python data_pipeline.py            # data anchors: rebuild + SHA-256 verify
 ```
@@ -420,6 +420,14 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
 
 ## History
 
+- **2026-07-17 — per-row tip clearance**: ε is now ABSOLUTE in mm
+  (grows relative to the shrinking rear blades — the physical effect a
+  fixed ε/h erased), with the Sakulkaew 2013 regimes (optimum below
+  0.8%, ~1.6 pts/1% linear, unloaded tip above 3.4%); physics, geometry
+  contract and validation share the same ε (published running clearance
+  per NASA machine). Documented global recalibration K_ENDWALL 1.0→1.4;
+  max |Δη| across the four machines drops 2.5 → 1.6 pts; REF_AX4
+  re-frozen.
 - **2026-07-17 — solid-profile blades**: layer 5c lofts each section's
   closed contour (`points` — the real NACA-65/DCA thickness
   distribution) into a watertight solid per blade, preserving the LE

@@ -124,6 +124,28 @@ check("máquina pequeña (Re↓) ⇒ η↓ (corrección de Reynolds activa)",
               for s in rec_small["stage_table"]),
       f"η {rec_small['eta_poly']:.4f} vs {rec['eta_poly']:.4f}")
 
+# holgura de punta por fila: ε absoluta en mm ⇒ ε/h crece hacia atrás
+eh = [s["losses"]["eps_over_h"] for s in rec["stage_table"]]
+fr = [s["losses"]["clearance"] / max(s["dh0"], 1e-3)
+      for s in rec["stage_table"]]
+check("holgura: ε/h crece hacia atrás y la última etapa pierde más",
+      all(eh[i] < eh[i + 1] for i in range(len(eh) - 1))
+      and fr[-1] > fr[0],
+      f"ε/h {eh[0]:.4f}→{eh[-1]:.4f}, frac {fr[0]:.4f}→{fr[-1]:.4f}")
+sweep = np.linspace(0.0, 0.06, 121)
+vals = [pc._clearance_loss_frac(e) for e in sweep]
+check("_clearance_loss_frac: continua y monótona en [0, 0.06]",
+      all(vals[i + 1] >= vals[i] for i in range(len(vals) - 1))
+      and max(abs(vals[i + 1] - vals[i]) for i in range(len(vals) - 1))
+      < 2.5 * pc.K_TIP_CLEARANCE * (sweep[1] - sweep[0]))
+_eps = pc.TIP_CLEARANCE_MM
+pc.TIP_CLEARANCE_MM = 3.0 * _eps
+rec_open = pc._meanline(THETA_REF)
+pc.TIP_CLEARANCE_MM = _eps
+check("holgura: ε↑ ⇒ η↓ (sensibilidad restaurable por parámetro)",
+      rec_open["eta_poly"] < rec["eta_poly"] - 0.002,
+      f"η {rec_open['eta_poly']:.4f} vs {rec['eta_poly']:.4f}")
+
 # ==========================================================================
 print("— T4 · robustez del vector g (dominancia de Deb)")
 rng = np.random.default_rng(42)

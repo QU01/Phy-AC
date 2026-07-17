@@ -19,6 +19,9 @@ Campos de cada entrada:
             sigma_s, AR, Rx_est (reacción media estimada de la fuente).
             Puede quedar FUERA de los bounds del optimizador — el meanline
             no depende de ellos.
+  eps_tip_mm  holgura de punta de marcha PUBLICADA [mm] (validate.py la
+            inyecta en physics_core.TIP_CLEARANCE_MM durante la corrida
+            de esa máquina; sin el campo se usa el default del módulo).
   kind      "rotor"   solo rotor (se califica el PR/η del rotor, derivado
                       del desglose de pérdidas de la etapa 1)
             "stage"   etapa completa (rotor + estátor)
@@ -50,6 +53,10 @@ MACHINES = [
                   P0=101_325.0, HTR=0.70, U_tip=454.5,
                   sigma_r=1.40, sigma_s=1.30, AR=1.19, Rx_est=0.65),
         measured=dict(PR=1.82, eta_isen=0.828),
+        eps_tip_mm=0.36,   # holgura de marcha familia TP-1337/1338
+        #                    (~0.036 cm; ε/h ≈ 0.5%). APROXIMADO: tomado
+        #                    del rotor 37 hermano — verificar contra
+        #                    TP-1338 antes de endurecer tolerancias.
         tol=dict(PR_rel=0.05, eta_pts=0.02),
         source=("Reid & Moore, NASA TP-1338 (1978): 'Design and Overall "
                 "Performance of Four Highly Loaded, High-Speed Inlet "
@@ -66,6 +73,8 @@ MACHINES = [
                   P0=101_325.0, HTR=0.70, U_tip=454.1,
                   sigma_r=1.50, sigma_s=1.30, AR=1.19, Rx_est=0.72),
         measured=dict(PR=2.106, eta_isen=0.877),
+        eps_tip_mm=0.356,  # running tip clearance publicada del caso test
+        #                    AGARD AR-355 (0.0356 cm; ε/h ≈ 0.5%)
         tol=dict(PR_rel=0.05, eta_pts=0.03),
         source=("Reid & Moore, NASA TP-1337 (1978); mediciones láser de "
                 "Suder (1996) y caso test AGARD AR-355. Punto de "
@@ -82,6 +91,8 @@ MACHINES = [
                   P0=101_325.0, HTR=0.375, U_tip=429.0,
                   sigma_r=1.30, sigma_s=1.20, AR=1.56, Rx_est=0.60),
         measured=dict(PR=1.63, eta_isen=0.93),
+        eps_tip_mm=1.0,    # ≈1.0 mm (0.039 in) — la holgura usada por los
+        #                    casos CFD estándar del rotor 67 (ε/h ≈ 0.6%)
         tol=dict(PR_rel=0.05, eta_pts=0.03),
         source=("Strazisar, Wood, Hathaway & Suder, NASA TP-2879 (1989): "
                 "'Laser Anemometer Measurements in a Transonic Axial-Flow "
@@ -98,6 +109,11 @@ MACHINES = [
                   P0=101_325.0, HTR=0.50, U_tip=456.0,
                   sigma_r=1.30, sigma_s=1.20, AR=1.50, Rx_est=0.60),
         measured=dict(PR=23.0, eta_poly=0.90),
+        eps_tip_mm=0.5,    # APROXIMADO: intención de diseño típica E³
+        #                    (~0.020 in); el CR no da un único valor —
+        #                    con ε cte las etapas traseras (h pequeña)
+        #                    dominan la pérdida de holgura, como en la
+        #                    máquina real.
         tol=dict(PR_rel=0.08, eta_pts=0.03),
         source=("GE Aircraft Engines, NASA CR-168919 / programa Energy "
                 "Efficient Engine: HPC de 10 etapas, PR 23, ~54.4 kg/s "
@@ -124,7 +140,7 @@ REGRESSION_ANCHORS = [
         name="REF_AX4 (4 etapas, θ de referencia del módulo)",
         theta=[4.0, 12_500.0, 0.62, 0.55, 0.32, -0.10, 0.60,
                1.20, 1.10, 2.20, 288.15, 101_325.0, 25.0],
-        expect=dict(PR=2.705606, eta_poly=0.883731, eta_isen=0.866534, T0_out=397.531727, U_tip=361.797379),          # se congela con --freeze-anchors
+        expect=dict(PR=2.715996, eta_poly=0.887134, eta_isen=0.870370, T0_out=397.531727, U_tip=361.797379),          # se congela con --freeze-anchors
         rtol=1e-3,
         feasible=False,         # ψ frontal 0.35 viola el margen de Koch
     ),

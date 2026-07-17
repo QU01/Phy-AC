@@ -38,6 +38,17 @@ Tabla viva en `validation/RESULTS.md` (regenerar tras tocar
 - Conversión arrastre→pérdida del endwall: ω̄ = C_D·σ·cos²β₁/cos³β_m
   (Dixon §3). El bug inicial (factor invertido) dominaba el error de η
   (−17 pts) — corregido y cubierto por las anclas de regresión.
+- **Holgura de punta por fila + K_ENDWALL = 1.4 (2026-07-17)**: ε pasa a
+  ser ABSOLUTA en mm (ε/h crece hacia las etapas traseras) con los
+  regímenes de Sakulkaew 2013, y la validación inyecta la ε publicada de
+  cada máquina (R37 0.356 mm AGARD; R67 ≈1.0 mm; Stage 35 0.36 mm y E³
+  0.5 mm APROXIMADOS). Al quitar el débito uniforme viejo (ε/h=1.5% ≈ 3
+  pts) las máquinas quedaban altas: recalibración GLOBAL documentada de
+  K_ENDWALL 1.0→1.4 (el CDa de Howell subestima el endwall — Koch &
+  Smith 1976 — y el débito uniforme lo absorbía en silencio). Resultado:
+  Δη máx |1.6| pts (antes |2.5|); ΔPR del E³ −4.4%→−5.5% (dentro de su
+  tolerancia relajada — es el límite de parametrización por etapa, fase
+  8). Ancla REF_AX4 re-congelada: PR 2.7056→2.7160, η 0.8837→0.8871.
 - **Corrección de Reynolds (2026-07-16)**: f_Re multiplica perfil y
   endwall (Koch & Smith 1976 nominal a Re_c=10⁶; Re^−0.2 turbulento,
   Re^−0.5 bajo 2×10⁵ — Wassell 1968 / Schäffler 1980). SIN crédito por
