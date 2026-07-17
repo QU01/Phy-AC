@@ -1,14 +1,14 @@
 {
   "cascade/lieblein_theta_c.csv": {
-    "sha256": "efc11b774ebb9568081dc11749a9f6eed599a6bd566f5b0e848c24cee8528e95",
-    "bytes": 712
+    "sha256": "f2e5aca04dc5ec7551a0fc714bf3b8a2b76de6042e60af9b35cc9412663073d4",
+    "bytes": 686
   },
   "cascade/carter_deviation.csv": {
-    "sha256": "eea5c91544ce11a83d904face606bebf8c6b3fcd948d4ea1080c4132862eb1e3",
-    "bytes": 455
+    "sha256": "161475555b5e2e1178149ee954fa6f41ca60df696f96fa177ed2aae906c0b807",
+    "bytes": 441
   },
   "cascade/howell_wdf.csv": {
-    "sha256": "303ac612b446580adf02155b190164f47f81d5396fc6c753f6bd39a279fae4e8",
-    "bytes": 325
+    "sha256": "d91fa3af79cefaf6f3f453c79fb480a89b7d95ba95f8dd002627efed5eba6d3b",
+    "bytes": 316
   }
 }

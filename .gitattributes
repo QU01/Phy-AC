@@ -1,0 +1,6 @@
+# Las anclas de correlación se verifican por SHA-256 (data/manifest.json):
+# un checkout con core.autocrlf=true las convertía a CRLF y rompía el
+# manifiesto (1 fallo en test_phyac.py en clon fresco). Forzar LF.
+data/** text eol=lf
+*.csv text eol=lf
+*.json text eol=lf

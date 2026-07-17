@@ -107,6 +107,27 @@ python phyac_cli.py --pr 4.0 --mdot 25 --rpm-max 18000 --utip-max 460 \
 python phyac_cli.py --pr 4.0 --mdot 25 --hifi-pairs cfx_pairs.json --outdir runs/cal
 ```
 
+### Engineer-in-the-loop controls
+
+```bash
+# Pin design variables and optimize the rest (repeatable), custom seed:
+python phyac_cli.py --pr 4 --mdot 25 --fix n_stages=5 --fix phi1=0.60 --seed 42
+
+# Evaluate ONE given design (no optimization) with full deliverables
+# (the 10 design vars — n_stages,RPM,HTR,phi1,psi_mid,psi_slope,Rx,
+#  sigma_r,sigma_s,AR — the operating point comes from the spec flags):
+python phyac_cli.py --eval-theta "4,12500,0.62,0.55,0.32,-0.10,0.60,1.20,1.10,2.20" \
+    --pr 4 --mdot 25 --outdir runs/eval --map
+
+# Warm-start a run from its checkpoint (dataset replaces the LHS):
+python phyac_cli.py --outdir runs/pr4 --resume --rounds 3
+
+# Inspect the verified Pareto front of a finished run, then regenerate
+# the full deliverables (report/geometry/STL) for any point of it:
+python phyac_cli.py --outdir runs/pr4 --list-pareto
+python phyac_cli.py --outdir runs/pr4 --pareto-pick 3 --stl
+```
+
 Interface control: `--no-color` (plain text, also respects `NO_COLOR`),
 `--quiet`/`-q` (milestones only). The styling lives in
 [`cli_style.py`](cli_style.py) (no external dependencies). Full examples:
@@ -161,7 +182,7 @@ C# phase outputs: one STL per part plus the union views (binary, in mm).
 | `AxialCompressorDesigner/` | 5c | C# library + PicoGK: imports `axial_compressor.json` (`PhyACImport`) and builds shaft, bladed discs and casing rings as printable STLs. |
 | `AxialCompressorDesigner.Example/` | 5c | Executable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | product | End-to-end CLI: spec → design → geometry → report → dataset [→ STLs via --stl/--voxel]. |
-| `test_phyac.py` | VV&UQ | Verification suite: 47 checks (triangles, conservation, g continuity, profiles, contract, disc solver, optimizer core, overlap regression). |
+| `test_phyac.py` | VV&UQ | Verification suite: 54 checks (triangles, conservation, g continuity, profiles, contract, disc solver, optimizer core, overlap regression). |
 | `validation/` | VV&UQ | Validation campaign vs NASA Stage 35, Rotor 37/67 and GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## Python API (layers 1–5b)
@@ -255,7 +276,7 @@ Phy-AC/
 ├── report_generator.py                   layer 5b  self-contained HTML report
 ├── visualization.py                      layer 5b  matplotlib figures (optional)
 ├── phyac_cli.py                          end-to-end CLI (spec → design → report [→ STLs])
-├── test_phyac.py                         verification suite (47 checks)
+├── test_phyac.py                         verification suite (54 checks)
 │
 ├── validation/                           validation campaign (machines.py, validate.py)
 ├── data/                                 in-repo correlation anchors + manifest.json
@@ -340,7 +361,7 @@ independent voxel fields built in the same `Library.Go` session.
 ## Verification and Validation
 
 ```bash
-python test_phyac.py               # verification: 47 checks
+python test_phyac.py               # verification: 54 checks
 python validation/validate.py      # validation: NASA machines → RESULTS.md
 python data_pipeline.py            # data anchors: rebuild + SHA-256 verify
 ```
@@ -393,6 +414,10 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
 
 ## History
 
+- **2026-07-16 — controllability**: engineer-in-the-loop CLI
+  (`--fix`, `--seed`, `--eval-theta`, `--resume` warm start,
+  `--list-pareto`/`--pareto-pick`); `.gitattributes` fixes the CRLF
+  anchor-hash test failure on fresh Windows clones.
 - **2026-07-11 — v0.1**: project created from the Phy-CC pattern
   (13-D θ with continuity-derived tip radius; endwall drag-to-loss
   conversion and Koch normalization fixed during the NASA validation;

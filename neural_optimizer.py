@@ -143,8 +143,9 @@ class EnsembleSurrogate:
     entre la verdad física (L1/L2 calibrada) y el meanline L0 — el L0 ya
     viene embebido en los features de entrada (physics_features)."""
 
-    def __init__(self, K=5):
+    def __init__(self, K=5, seed=SEED):
         self.K = K
+        self.seed = int(seed)
         self.members: list[_MLP] = []
         self.y_mean = self.y_std = None
         self.metrics: dict = {}
@@ -172,8 +173,8 @@ class EnsembleSurrogate:
         self.members = []
         for k in range(self.K):
             boot = r.choice(ti, size=len(ti), replace=True)
-            m = _MLP(X.shape[1], Yn.shape[1], seed=SEED + 13 * k)
-            m.train(X[boot], Yn[boot], Xv, Yv, seed=SEED + 7 * k)
+            m = _MLP(X.shape[1], Yn.shape[1], seed=self.seed + 13 * k)
+            m.train(X[boot], Yn[boot], Xv, Yv, seed=self.seed + 7 * k)
             self.members.append(m)
 
         # ---- Quality gate: R² en holdout + cobertura de incertidumbre ----
@@ -221,12 +222,18 @@ class DesignSpec:
     estructurales duras de structures_core (fluencia a sobrevelocidad,
     margen de estallido, límite AN², raíz de álabe) dentro de la
     dominancia restringida. `material=None` las desactiva (solo
-    aerodinámica — para estudios/debug)."""
+    aerodinámica — para estudios/debug).
+
+    `fixed_vars`: dict {nombre: valor} de variables de DISEÑO que el
+    ingeniero decide fijar (p. ej. {"n_stages": 5, "phi1": 0.60}); el
+    optimizador explora solo el resto. Nombres válidos: los primeros 10
+    de physics_core.VAR_NAMES. El punto de operación (T0_in, P0_in,
+    massflow) se fija con los campos del spec, no aquí."""
 
     def __init__(self, PR_target=4.0, massflow=25.0, RPM_max=20_000,
                  U_tip_max=480.0, r_tip_max_mm=400.0, n_stages_max=8,
                  power_max_W=None, T0_in=288.15, P0_in=101_325.0,
-                 material="Ti-6Al-4V"):
+                 material="Ti-6Al-4V", fixed_vars=None):
         self.PR_target = PR_target
         self.massflow = massflow
         self.RPM_max = RPM_max
@@ -241,11 +248,29 @@ class DesignSpec:
                 f"material '{material}' no existe — disponibles: "
                 f"{', '.join(structures_core.list_materials())} (o None)")
         self.material = material
+        self.fixed_vars = {k: float(v) for k, v in (fixed_vars or {}).items()}
+        design_names = VAR_NAMES[:10]
+        for name in self.fixed_vars:
+            if name in ("T0_in", "P0_in", "massflow"):
+                raise ValueError(
+                    f"'{name}' es punto de operación — se fija con los "
+                    "campos T0_in/P0_in/massflow del spec, no con fixed_vars")
+            if name not in design_names:
+                raise ValueError(
+                    f"variable '{name}' no existe — fijables: "
+                    f"{', '.join(design_names)}")
+        self._fixed_idx = [(VAR_NAMES.index(k), v)
+                           for k, v in self.fixed_vars.items()]
 
     def fix_operating_point(self, theta: np.ndarray) -> np.ndarray:
+        """Fija el punto de operación del spec y las fixed_vars del
+        ingeniero. TODA evaluación (LHS, NSGA-II, adquisición) pasa por
+        aquí, así que fijar una variable colapsa esa dimensión."""
         theta = np.asarray(theta, dtype=float).copy()
         theta[10], theta[11], theta[12] = (self.T0_in, self.P0_in,
                                            self.massflow)
+        for idx, val in self._fixed_idx:
+            theta[idx] = val
         return theta
 
     # ---- objetivos (a MINIMIZAR) y restricciones (g<=0) sobre un record --
@@ -478,11 +503,43 @@ class AutonomousAxialDesigner:
         self.fidelity = fidelity
         self.n_workers = n_workers
         self.log = log
-        self.rng = np.random.default_rng(seed)
-        self.sur = EnsembleSurrogate(K=5)
+        self.seed = int(seed)
+        self.rng = np.random.default_rng(self.seed)
+        self.sur = EnsembleSurrogate(K=5, seed=self.seed)
         self.X: list[np.ndarray] = []     # features
         self.recs: list[dict] = []        # records físicos
         self.history: list[dict] = []
+
+    @classmethod
+    def load(cls, path: str, fidelity=Fidelity.L1, n_workers=1,
+             log=print, seed: int | None = None) -> "AutonomousAxialDesigner":
+        """Reconstruye un designer desde un checkpoint de save() (warm
+        start). El dataset guardado solo trae theta + salidas; el record
+        completo (stage_table, g_struct...) se reconstruye re-evaluando el
+        L0 (~1 ms/punto) y se sobreescriben las salidas con las guardadas
+        (que pueden ser L1/calibradas) — la verdad del flywheel se
+        conserva. `seed=None` continúa con la semilla del checkpoint."""
+        with open(path, encoding="utf-8") as f:
+            payload = json.load(f)
+        spec_kw = {k: v for k, v in payload["spec"].items()
+                   if not k.startswith("_")}
+        spec = DesignSpec(**spec_kw)
+        d = cls(spec, fidelity=fidelity, n_workers=n_workers, log=log,
+                seed=payload.get("seed", SEED) if seed is None else seed)
+        for row in payload.get("dataset", []):
+            t = np.asarray(row["theta"], dtype=float)
+            rec = evaluate(t, fidelity=Fidelity.L0, use_cache=False,
+                           calibrate=False)
+            rec.update({k: float(row[k]) for k in OUT_KEYS if k in row})
+            if row.get("g") is not None:
+                rec["g"] = row["g"]
+            if row.get("source"):
+                rec["source"] = row["source"]
+            rec["_theta"] = t.tolist()
+            d.X.append(physics_features(t))
+            d.recs.append(rec)
+        d.history = payload.get("history", [])
+        return d
 
     # ---- evaluación física + registro ------------------------------------
     def _eval_and_store(self, thetas: np.ndarray) -> list[dict]:
@@ -516,12 +573,7 @@ class AutonomousAxialDesigner:
 
     def _scalar_fitness(self, rec: dict, theta: np.ndarray) -> float:
         """Fitness escalar SOLO para reportar/elegir incumbente."""
-        g = self.spec.constraints(rec, theta)
-        v = self.spec.violation(g)
-        if v > 1e-9:
-            return -10.0 * v
-        pr_err = abs(rec["PR"] - self.spec.PR_target) / self.spec.PR_target
-        return rec["eta_poly"] - 2.0 * pr_err
+        return scalar_fitness(self.spec, rec, theta)
 
     def _update_best(self, recs: list[dict], best):
         for r in recs:
@@ -536,10 +588,17 @@ class AutonomousAxialDesigner:
         if n_init < 1:
             raise ValueError("n_init debe ser >= 1")
         t0 = time.time()
-        self.log(f"[1/4] Initial LHS sampling: {n_init} physical evaluations "
-                 f"({Fidelity(self.fidelity).name})...")
-        U0 = self._lhs(n_init, NDIM, self.rng)
-        recs0 = self._eval_and_store(np.array([denormalize(u) for u in U0]))
+        if self.recs:
+            # warm start (load()): el dataset previo sustituye al LHS
+            self.log(f"[1/4] Resumed: {len(self.recs)} previous physical "
+                     f"evaluations from checkpoint (LHS skipped).")
+            recs0 = self.recs
+        else:
+            self.log(f"[1/4] Initial LHS sampling: {n_init} physical "
+                     f"evaluations ({Fidelity(self.fidelity).name})...")
+            U0 = self._lhs(n_init, NDIM, self.rng)
+            recs0 = self._eval_and_store(
+                np.array([denormalize(u) for u in U0]))
 
         gate = self._train()
         best = self._update_best(recs0, None)
@@ -556,7 +615,7 @@ class AutonomousAxialDesigner:
 
             self.log("[2/4] Constrained NSGA-II over surrogate...")
             ga = NSGA2(self.spec, self.sur, pop=96, generations=60,
-                       seed=SEED + rd)
+                       seed=self.seed + rd)
             result = ga.run()
             n_feas = int(np.sum(result["V"][result["pareto_idx"]] <= 1e-9))
             self.log(f"      Predicted front: {len(result['pareto_idx'])} "
@@ -566,7 +625,7 @@ class AutonomousAxialDesigner:
                      f"{batch_size} physical evaluations...")
             batchU = select_acquisition_batch(result, self.spec,
                                               batch_size=batch_size,
-                                              seed=SEED + 100 * rd)
+                                              seed=self.seed + 100 * rd)
             recs = self._eval_and_store(
                 np.array([denormalize(u) for u in batchU]))
 
@@ -620,7 +679,9 @@ class AutonomousAxialDesigner:
 
     def save(self, path: str):
         payload = dict(
-            spec=vars(self.spec), seed=SEED,
+            spec={k: v for k, v in vars(self.spec).items()
+                  if not k.startswith("_")},
+            seed=self.seed,
             n_evals=len(self.recs), history=self.history,
             dataset=[dict(theta=r["_theta"],
                           **{k: r[k] for k in OUT_KEYS},
@@ -637,12 +698,62 @@ AutonomousCompressorDesigner = AutonomousAxialDesigner
 # ==========================================================================
 # 7. API de producto
 # ==========================================================================
+def scalar_fitness(spec: DesignSpec, rec: dict, theta: np.ndarray) -> float:
+    """Fitness escalar para reportar/elegir incumbente: η con penalización
+    por error de PR; infactible → −10·violación (continua)."""
+    g = spec.constraints(rec, theta)
+    v = spec.violation(g)
+    if v > 1e-9:
+        return -10.0 * v
+    pr_err = abs(rec["PR"] - spec.PR_target) / spec.PR_target
+    return rec["eta_poly"] - 2.0 * pr_err
+
+
+def evaluate_design(spec: DesignSpec, theta_design,
+                    fidelity=Fidelity.L0) -> dict:
+    """Evalúa UN diseño dado por el ingeniero, SIN optimizar.
+
+    `theta_design`: las 10 variables de diseño (VAR_NAMES[:10]) — el punto
+    de operación lo pone el spec — o el θ completo de 13. Devuelve un dict
+    con la misma forma que design(): {theta, record, fitness, history,
+    pareto_front} (front de 1 punto), listo para geometría/reporte/STL."""
+    theta = np.asarray(theta_design, dtype=float).ravel()
+    if theta.shape[0] == NDIM - 3:
+        theta = np.concatenate([theta, [spec.T0_in, spec.P0_in,
+                                        spec.massflow]])
+    if theta.shape[0] != NDIM:
+        raise ValueError(
+            f"theta debe tener {NDIM - 3} valores ({', '.join(VAR_NAMES[:10])})"
+            f" o {NDIM} incluyendo T0_in, P0_in, massflow — llegaron "
+            f"{theta.shape[0]}")
+    theta = spec.fix_operating_point(theta)
+    rec = evaluate(theta, fidelity=fidelity)
+    rec["_theta"] = theta.tolist()
+    fit = scalar_fitness(spec, rec, theta)
+    feasible = bool(spec.violation(spec.constraints(rec, theta)) <= 1e-9)
+    front = [dict(theta=rec["_theta"], PR=rec["PR"],
+                  eta_poly=rec["eta_poly"], Mu=rec["Mu"],
+                  n_stages=rec.get("n_stages"), power_W=rec["power_W"],
+                  feasible=feasible, source=rec.get("source", ""))]
+    return dict(theta=theta, record=rec, fitness=fit, history=[],
+                pareto_front=front)
+
+
+def pareto_from_checkpoint(path: str, log=lambda *a: None):
+    """(spec, frente de Pareto verificado) desde un checkpoint de save().
+    Cada punto trae su θ completo — apto para re-generar entregables."""
+    d = AutonomousAxialDesigner.load(path, fidelity=Fidelity.L0, log=log)
+    return d.spec, d._final_pareto()
+
+
 def design(spec: DesignSpec, rounds=5, n_init=320, batch_size=14,
            fidelity=Fidelity.L1, n_workers=1,
-           checkpoint_path="phyac_run.json", log=print, seed=SEED) -> dict:
+           checkpoint_path="phyac_run.json", log=print,
+           seed: int | None = SEED) -> dict:
     """Punto de entrada Phy-AC: espec → diseño verificado + Pareto."""
     d = AutonomousAxialDesigner(spec, fidelity=fidelity,
-                                n_workers=n_workers, log=log, seed=seed)
+                                n_workers=n_workers, log=log,
+                                seed=SEED if seed is None else seed)
     return d.run(n_init=n_init, rounds=rounds, batch_size=batch_size,
                  checkpoint_path=checkpoint_path)
 

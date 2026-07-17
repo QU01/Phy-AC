@@ -147,10 +147,13 @@ def verify_manifest(data_dir: Path = DEFAULT_DATA_DIR) -> list[str]:
 def _write_csv(path: Path, header_comments: list[str], cols: list[str],
                rows: np.ndarray) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    # LF determinista (csv.writer emite \r\n por defecto en Windows):
+    # los hashes del manifest deben ser idénticos en cualquier plataforma
+    # y coincidir con la normalización eol=lf de .gitattributes.
     with open(path, "w", newline="", encoding="utf-8") as f:
         for line in header_comments:
             f.write(f"# {line}\n")
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow(cols)
         for row in rows:
             w.writerow([f"{v:.6g}" for v in row])

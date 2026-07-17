@@ -302,6 +302,64 @@ check("record trae claves del patrón Phy-CC (U2/Mu/T02 alias)",
       all(k in r1 for k in ("U2", "Mu", "T02", "g", "feasible")))
 
 # ==========================================================================
+print("— T12 · controlabilidad (fixed vars, eval directa, warm start)")
+spec_fx = no.DesignSpec(PR_target=4.0, massflow=25.0, material=None,
+                        fixed_vars={"n_stages": 5, "phi1": 0.60})
+th_fx = spec_fx.fix_operating_point(THETA_REF)
+check("fixed_vars: fija n_stages y phi1 en TODA evaluación",
+      th_fx[0] == 5.0 and th_fx[3] == 0.60
+      and th_fx[12] == spec_fx.massflow)
+try:
+    no.DesignSpec(material=None, fixed_vars={"massflow": 10.0})
+    ok_reject = False
+except ValueError:
+    ok_reject = True
+try:
+    no.DesignSpec(material=None, fixed_vars={"no_existe": 1.0})
+    ok_reject2 = False
+except ValueError:
+    ok_reject2 = True
+check("fixed_vars: rechaza punto de operación y nombres inválidos",
+      ok_reject and ok_reject2)
+
+res_ev = no.evaluate_design(spec_fx, THETA_REF[:10],
+                            fidelity=pc.Fidelity.L0)
+check("evaluate_design: 10 valores + spec ⇒ record completo y front de 1",
+      res_ev["record"]["PR"] > 1.0 and len(res_ev["pareto_front"]) == 1
+      and res_ev["theta"][0] == 5.0,        # fixed_vars también aplican
+      f"PR={res_ev['record']['PR']:.3f}")
+
+with tempfile.TemporaryDirectory() as td:
+    d1 = no.AutonomousAxialDesigner(spec, fidelity=pc.Fidelity.L0,
+                                    log=lambda *a: None, seed=42)
+    thetas3 = np.array([THETA_REF,
+                        THETA_REF * [1, 1.05, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                        THETA_REF * [1, 0.95, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]])
+    d1._eval_and_store(thetas3)
+    ck2 = os.path.join(td, "warm.json")
+    d1.save(ck2)
+    d2 = no.AutonomousAxialDesigner.load(ck2, fidelity=pc.Fidelity.L0,
+                                         log=lambda *a: None)
+    check("warm start: load() restaura n_evals, semilla y salidas",
+          len(d2.recs) == 3 and d2.seed == 42
+          and abs(d2.recs[0]["PR"] - d1.recs[0]["PR"]) < 1e-9
+          and d2.recs[0].get("stage_table") is not None)
+    sp2, front2 = no.pareto_from_checkpoint(ck2)
+    check("pareto_from_checkpoint: front verificado con θ completo",
+          len(front2) >= 1
+          and all(len(q["theta"]) == pc.NDIM for q in front2))
+
+import phyac_cli
+fx = phyac_cli.parse_fixed(["phi1=0.6", "n_stages=5"])
+check("CLI parse_fixed: VAR=VALOR → dict numérico",
+      fx == {"phi1": 0.6, "n_stages": 5.0})
+a_cli = phyac_cli.parse_args(["--pr", "4", "--fix", "phi1=0.6",
+                              "--seed", "7", "--eval-theta", "1,2,3"])
+check("CLI: --fix/--seed/--eval-theta parsean",
+      a_cli.fix == ["phi1=0.6"] and a_cli.seed == 7
+      and a_cli.eval_theta == "1,2,3")
+
+# ==========================================================================
 print(f"\n{_n_pass}/{_n_pass + _n_fail} checks OK"
       + (f" — {_n_fail} FALLOS" if _n_fail else ""))
 sys.exit(1 if _n_fail else 0)

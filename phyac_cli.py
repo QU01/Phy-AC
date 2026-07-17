@@ -40,10 +40,13 @@ import sys
 
 import numpy as np
 
-from physics_core import (Fidelity, register_hifi_pair, VAR_NAMES,
+from physics_core import (Fidelity, register_hifi_pair, VAR_NAMES, NDIM,
+                          BOUNDS_LO, BOUNDS_HI,
                           l1_available, l1_unavailable_reason,
                           set_cache_path, compressor_map)
-from neural_optimizer import DesignSpec, design, OUT_KEYS
+from neural_optimizer import (DesignSpec, design, OUT_KEYS,
+                              AutonomousAxialDesigner, evaluate_design,
+                              pareto_from_checkpoint)
 import geometry_generator
 import report_generator
 import structures_core
@@ -79,6 +82,11 @@ def parse_args(argv=None):
                         "(default Ti-6Al-4V)")
     s.add_argument("--spec-file", type=str, default=None,
                    help="JSON with the spec (overwrites flags)")
+    s.add_argument("--fix", action="append", default=None,
+                   metavar="VAR=VALUE",
+                   help="pin a design variable and optimize the rest "
+                        "(repeatable), e.g. --fix n_stages=5 --fix "
+                        "phi1=0.60. Vars: " + ", ".join(VAR_NAMES[:10]))
     b = p.add_argument_group("budget")
     b.add_argument("--rounds", type=int, default=5)
     b.add_argument("--n-init", type=int, default=320)
@@ -88,6 +96,31 @@ def parse_args(argv=None):
     b.add_argument("--fidelity", choices=["L0", "L1"], default="L1")
     b.add_argument("--quick", action="store_true",
                    help="quick smoke run (n_init=100, rounds=2, batch=8)")
+    b.add_argument("--seed", type=int, default=None,
+                   help="random seed of the whole run (default 71; a "
+                        "resumed run keeps its checkpoint's seed)")
+    b.add_argument("--resume", nargs="?", const="__auto__", default=None,
+                   metavar="CHECKPOINT",
+                   help="warm-start from a phyac_run.json checkpoint "
+                        "(without a value: <outdir>/phyac_run.json); the "
+                        "spec is taken from the checkpoint")
+    d = p.add_argument_group("direct evaluation (no optimization)")
+    d.add_argument("--eval-theta", type=str, default=None,
+                   metavar="V1,V2,...",
+                   help="evaluate ONE given design and emit the full "
+                        f"deliverables: {NDIM - 3} design values "
+                        f"({', '.join(VAR_NAMES[:10])}) or the full "
+                        f"{NDIM} incl. T0,P0,mdot")
+    d.add_argument("--from-checkpoint", type=str, default=None,
+                   help="checkpoint for --list-pareto / --pareto-pick "
+                        "(default <outdir>/phyac_run.json)")
+    d.add_argument("--list-pareto", action="store_true",
+                   help="print the verified Pareto front of a checkpoint "
+                        "and exit")
+    d.add_argument("--pareto-pick", type=int, default=None, metavar="N",
+                   help="regenerate the deliverables for point #N of the "
+                        "checkpoint's Pareto front (see --list-pareto); "
+                        "written to <outdir>/pareto_NN/")
     o = p.add_argument_group("outputs")
     o.add_argument("--outdir", type=str, default="phyac_out")
     o.add_argument("--map", action="store_true",
@@ -111,16 +144,42 @@ def parse_args(argv=None):
     return p.parse_args(argv)
 
 
+def parse_fixed(items) -> dict:
+    """['phi1=0.6', 'n_stages=5'] → {'phi1': 0.6, 'n_stages': 5.0}.
+    La validación de nombres la hace DesignSpec."""
+    fixed = {}
+    for it in items or []:
+        if "=" not in it:
+            raise ValueError(f"--fix espera VAR=VALOR, llegó '{it}'")
+        name, _, raw = it.partition("=")
+        try:
+            fixed[name.strip()] = float(raw)
+        except ValueError:
+            raise ValueError(f"--fix {name}: valor no numérico '{raw}'")
+    return fixed
+
+
 def build_spec(args) -> DesignSpec:
     kw = dict(PR_target=args.pr, massflow=args.mdot, RPM_max=args.rpm_max,
               U_tip_max=args.utip_max, r_tip_max_mm=args.rtip_max,
               n_stages_max=args.nstages_max,
               power_max_W=args.power_max, T0_in=args.t0, P0_in=args.p0,
-              material=args.material)
+              material=args.material, fixed_vars=parse_fixed(args.fix))
     if args.spec_file:
         with open(args.spec_file) as f:
             kw.update(json.load(f))
     return DesignSpec(**kw)
+
+
+def warn_fixed_out_of_bounds(spec: DesignSpec):
+    """Fijar fuera de los bounds del optimizador es legal (la física los
+    tolera) pero merece aviso: el surrogate extrapola en esa dimensión."""
+    for name, val in spec.fixed_vars.items():
+        i = VAR_NAMES.index(name)
+        if not (BOUNDS_LO[i] <= val <= BOUNDS_HI[i]):
+            print(ui.warn(f"--fix {name}={val:g} fuera de los bounds "
+                          f"[{BOUNDS_LO[i]:g}, {BOUNDS_HI[i]:g}] del "
+                          "optimizador — el surrogate extrapolará"))
 
 
 # ----------------------------------------------------------- interactive
@@ -265,73 +324,13 @@ def generate_stls(contract_json: str, outdir: str, voxel: float) -> bool:
         return False
 
 
-# ----------------------------------------------------------- main
-def main(argv=None) -> int:
-    # consolas/pipes Windows reportan cp1252 y truenan con η/₂/✓
-    for _s in (sys.stdout, sys.stderr):
-        try:
-            _s.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
-    args = parse_args(argv)
-    ui.init(use_color=False if args.no_color else None)
-
-    raw_argv = sys.argv[1:] if argv is None else list(argv)
-    if not raw_argv:
-        args.interactive = True
-
-    print()
-    print(ui.banner())
-    print()
-
-    if args.interactive:
-        args = run_wizard(args)
-    if args.quick:
-        args.n_init, args.rounds, args.batch_size = 100, 2, 8
-    os.makedirs(args.outdir, exist_ok=True)
-    spec = build_spec(args)
-    fidelity = Fidelity.L1 if args.fidelity == "L1" else Fidelity.L0
-
-    if fidelity == Fidelity.L1 and not l1_available():
-        print(ui.warn(f"turbo-design not available ({l1_unavailable_reason()})"))
-        print(ui.c("    → entire run will be L0 (meanline), tagged as "
-                   "'source'.", "dim"))
-        fidelity = Fidelity.L0
-        args.fidelity = "L0"
-
-    set_cache_path(os.environ.get("PHYAC_CACHE")
-                   or os.path.join(args.outdir, "phys_cache.jsonl"))
-
-    if args.hifi_pairs:
-        with open(args.hifi_pairs) as f:
-            for pair in json.load(f):
-                register_hifi_pair(np.array(pair["theta"]),
-                                   {k: v for k, v in pair.items()
-                                    if k != "theta"})
-        print(ui.ok(f"calibration loaded: {args.hifi_pairs}"))
-
-    budget = (f"{args.n_init} init + {args.rounds}×{args.batch_size} "
-              "acquisition" + ("  (quick)" if args.quick else ""))
-    print(ui.panel("Specification", [
-        ("Target PR", ui.c(f"{spec.PR_target:.2f}", "val", bold=True)),
-        ("Mass flow", f"{spec.massflow:.2f} kg/s"),
-        ("Max RPM", f"{spec.RPM_max:,.0f}"),
-        ("Max U_tip", f"{spec.U_tip_max:.0f} m/s"),
-        ("Max r_tip", f"{spec.r_tip_max_mm:.0f} mm"),
-        ("Max stages", f"{spec.n_stages_max}"),
-        ("Inlet", f"T0={spec.T0_in:.1f} K   P0={spec.P0_in:,.0f} Pa"),
-        ("Budget", ui.c(budget, "accent")),
-        ("Fidelity", ui.c(args.fidelity, "brand")),
-    ]))
-    print()
-    print(ui.rule("Autonomous optimization", "brand"))
-
-    ckpt = os.path.join(args.outdir, "phyac_run.json")
-    logger = StyledLog(quiet=args.quiet)
-    result = design(spec, rounds=args.rounds, n_init=args.n_init,
-                    batch_size=args.batch_size, fidelity=fidelity,
-                    n_workers=args.workers, checkpoint_path=ckpt, log=logger)
-
+# ----------------------------------------------------------- deliverables
+def emit_deliverables(args, spec, result, outdir, ckpt=None, logger=None,
+                      title="Recommended design"):
+    """Capa 5 compartida por los tres caminos del CLI (optimización,
+    --eval-theta, --pareto-pick): estructural + geometría + reporte +
+    dataset (si hay checkpoint) + STL/map opcionales + panel final."""
+    logger = logger or StyledLog(quiet=args.quiet)
     rec, theta = result["record"], np.asarray(result["theta"])
 
     # ---- Structural margins (structures_core L0s — hard constraint) ----
@@ -346,16 +345,16 @@ def main(argv=None) -> int:
     # ---- Layer 5: geometry + report + dataset ----
     print()
     print(ui.rule("Deliverables (Layer 5)", "brand"))
-    geo_dir = os.path.join(args.outdir, "geometry")
+    geo_dir = os.path.join(outdir, "geometry")
     manifest = geometry_generator.generate(
         theta, rec, geo_dir, structural=structural,
-        run_meta=dict(checkpoint=ckpt, rounds=args.rounds,
+        run_meta=dict(checkpoint=ckpt or "", rounds=args.rounds,
                       n_init=args.n_init, fidelity=args.fidelity))
     print("  " + ui.ok(f"geometry   → {geo_dir}/ ({len(manifest)} files)"))
     bcs = cfx_boundary_conditions(theta, rec)
-    figs_dir = os.path.join(args.outdir, "figures")
+    figs_dir = os.path.join(outdir, "figures")
     report = report_generator.generate_report(
-        spec, result, os.path.join(args.outdir, "report.html"),
+        spec, result, os.path.join(outdir, "report.html"),
         geometry_manifest=manifest, cfx_bcs=bcs,
         figures_dir=figs_dir, include_figures=not args.no_figures,
         structural=structural, log=logger)
@@ -364,22 +363,23 @@ def main(argv=None) -> int:
         n_figs = len([f for f in os.listdir(figs_dir) if f.endswith(".png")])
         if n_figs:
             print("  " + ui.ok(f"figures    → {figs_dir}/ ({n_figs} PNG)"))
-    n_rows = export_dataset_csv(ckpt, os.path.join(args.outdir, "dataset.csv"))
-    print("  " + ui.ok(f"dataset    → {n_rows} rows (flywheel)"))
+    if ckpt and os.path.exists(ckpt):
+        n_rows = export_dataset_csv(ckpt, os.path.join(outdir, "dataset.csv"))
+        print("  " + ui.ok(f"dataset    → {n_rows} rows (flywheel)"))
 
     # ---- Generación de STL con C# (opcional) ----
     if args.stl or args.voxel is not None:
         voxel_val = args.voxel if args.voxel is not None else 0.5
         contract_path = os.path.join(geo_dir, "axial_compressor.json")
         if os.path.exists(contract_path):
-            generate_stls(contract_path, args.outdir, voxel_val)
+            generate_stls(contract_path, outdir, voxel_val)
         else:
             print(ui.warn(f"Could not find {contract_path} to generate STLs."))
 
     # ---- Mapa off-design opcional ----
     if args.map:
         mp = compressor_map(theta)
-        map_path = os.path.join(args.outdir, "map.csv")
+        map_path = os.path.join(outdir, "map.csv")
         with open(map_path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             w.writerow(["speed_frac", "rpm", "mdot_kgs", "PR", "eta_poly",
@@ -414,8 +414,9 @@ def main(argv=None) -> int:
         ("U_tip", f"{rec['U_tip']:.0f} m/s"),
         ("Status", status),
         ("Pareto", f"{len(result['pareto_front'])} points ({feas} feasible)"),
-        ("Checkpoint", ui.c(ckpt, "dim")),
     ]
+    if ckpt:
+        rows.append(("Checkpoint", ui.c(ckpt, "dim")))
     if structural:
         s_ok = structural["feasible_struct"]
         rows.insert(5, ("Structure",
@@ -425,12 +426,182 @@ def main(argv=None) -> int:
                                f"burst {structural['burst_margin']:.2f} · "
                                f"AN² {structural['AN2_in2rpm2']:.1e} "
                                "in²rpm²", "dim")))
-    print(ui.panel("Recommended design", rows,
-                   style="ok" if feasible else "warn"))
+    print(ui.panel(title, rows, style="ok" if feasible else "warn"))
     print()
     print("  " + ui.c("Open report:", "dim") + " "
           + ui.c(report, "brand", bold=True))
     print()
+    return report
+
+
+# ----------------------------------------------------------- pareto mode
+def run_pareto_mode(args) -> int:
+    """--list-pareto / --pareto-pick: opera sobre un checkpoint existente
+    sin re-optimizar. El frente se re-verifica con la física (L0)."""
+    ck = args.from_checkpoint or os.path.join(args.outdir, "phyac_run.json")
+    if not os.path.exists(ck):
+        print(ui.warn(f"checkpoint not found: {ck} (use --from-checkpoint)"))
+        return 2
+    spec, front = pareto_from_checkpoint(ck)
+    front.sort(key=lambda q: (not q["feasible"], -q["eta_poly"]))
+    print(ui.rule("Verified Pareto front", "brand"))
+    print(ui.c(f"  {ck} — {len(front)} points\n", "dim"))
+    print(ui.c(f"  {'#':>3}  {'feas':^4} {'stg':>3} {'PR':>7} "
+               f"{'eta_poly':>8} {'Mu':>6} {'P [kW]':>9}  source", "key"))
+    for i, q in enumerate(front):
+        feas_txt = (ui.c("  OK ", "ok") if q["feasible"]
+                    else ui.c("  -- ", "warn"))
+        print(f"  {i:>3} {feas_txt} {q.get('n_stages') or 0:>3} "
+              f"{q['PR']:7.3f} {q['eta_poly']:8.3f} {q['Mu']:6.3f} "
+              f"{q['power_W'] / 1e3:9.1f}  {q.get('source', '')}")
+    if args.pareto_pick is None:
+        print(ui.c("\n  deliverables for a point:  --pareto-pick N "
+                   "[--stl] [--map]", "dim"))
+        return 0
+    n = args.pareto_pick
+    if not 0 <= n < len(front):
+        print(ui.warn(f"--pareto-pick {n} out of range 0..{len(front) - 1}"))
+        return 2
+    fidelity = Fidelity.L1 if args.fidelity == "L1" else Fidelity.L0
+    result = evaluate_design(spec, np.array(front[n]["theta"]),
+                             fidelity=fidelity)
+    outdir = os.path.join(args.outdir, f"pareto_{n:02d}")
+    os.makedirs(outdir, exist_ok=True)
+    print()
+    print("  " + ui.ok(f"Pareto point #{n} → {outdir}/"))
+    emit_deliverables(args, spec, result, outdir, ckpt=None,
+                      title=f"Pareto point #{n}")
+    return 0
+
+
+# ----------------------------------------------------------- main
+def main(argv=None) -> int:
+    # consolas/pipes Windows reportan cp1252 y truenan con η/₂/✓
+    for _s in (sys.stdout, sys.stderr):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    args = parse_args(argv)
+    ui.init(use_color=False if args.no_color else None)
+
+    raw_argv = sys.argv[1:] if argv is None else list(argv)
+    if not raw_argv:
+        args.interactive = True
+
+    print()
+    print(ui.banner())
+    print()
+
+    # ---- modos sobre checkpoint existente (sin optimizar) ----
+    if args.list_pareto or args.pareto_pick is not None:
+        return run_pareto_mode(args)
+
+    if args.interactive:
+        args = run_wizard(args)
+    if args.quick:
+        args.n_init, args.rounds, args.batch_size = 100, 2, 8
+    os.makedirs(args.outdir, exist_ok=True)
+    try:
+        spec = build_spec(args)
+    except ValueError as e:
+        print(ui.warn(str(e)))
+        return 2
+    warn_fixed_out_of_bounds(spec)
+    fidelity = Fidelity.L1 if args.fidelity == "L1" else Fidelity.L0
+
+    if fidelity == Fidelity.L1 and not l1_available():
+        print(ui.warn(f"turbo-design not available ({l1_unavailable_reason()})"))
+        print(ui.c("    → entire run will be L0 (meanline), tagged as "
+                   "'source'.", "dim"))
+        fidelity = Fidelity.L0
+        args.fidelity = "L0"
+
+    set_cache_path(os.environ.get("PHYAC_CACHE")
+                   or os.path.join(args.outdir, "phys_cache.jsonl"))
+
+    if args.hifi_pairs:
+        with open(args.hifi_pairs) as f:
+            for pair in json.load(f):
+                register_hifi_pair(np.array(pair["theta"]),
+                                   {k: v for k, v in pair.items()
+                                    if k != "theta"})
+        print(ui.ok(f"calibration loaded: {args.hifi_pairs}"))
+
+    logger = StyledLog(quiet=args.quiet)
+
+    # ---- evaluación directa de un θ dado (sin optimizar) ----
+    if args.eval_theta:
+        try:
+            vals = [float(x) for x in re.split(r"[,\s]+",
+                                               args.eval_theta.strip()) if x]
+            if len(vals) == len(VAR_NAMES):
+                spec.T0_in, spec.P0_in, spec.massflow = (vals[10], vals[11],
+                                                         vals[12])
+            result = evaluate_design(spec, np.array(vals), fidelity=fidelity)
+        except ValueError as e:
+            print(ui.warn(str(e)))
+            return 2
+        print(ui.panel("Direct evaluation (no optimization)", [
+            (name, f"{val:g}")
+            for name, val in zip(VAR_NAMES, result["theta"])]))
+        emit_deliverables(args, spec, result, args.outdir, ckpt=None,
+                          logger=logger, title="Evaluated design")
+        return 0
+
+    # ---- optimización (nueva o reanudada) ----
+    ckpt = os.path.join(args.outdir, "phyac_run.json")
+    designer = None
+    if args.resume is not None:
+        resume_path = (ckpt if args.resume == "__auto__" else args.resume)
+        if not os.path.exists(resume_path):
+            print(ui.warn(f"checkpoint not found: {resume_path}"))
+            return 2
+        designer = AutonomousAxialDesigner.load(
+            resume_path, fidelity=fidelity, n_workers=args.workers,
+            log=logger, seed=args.seed)
+        spec = designer.spec       # el dataset se evaluó bajo este spec
+        print(ui.ok(f"resumed: {resume_path} · {len(designer.recs)} previous "
+                    f"evaluations · seed {designer.seed}"))
+
+    budget = (f"{args.n_init} init + {args.rounds}×{args.batch_size} "
+              "acquisition" + ("  (quick)" if args.quick else ""))
+    if designer is not None:
+        budget = (f"{len(designer.recs)} resumed + {args.rounds}×"
+                  f"{args.batch_size} acquisition")
+    panel_rows = [
+        ("Target PR", ui.c(f"{spec.PR_target:.2f}", "val", bold=True)),
+        ("Mass flow", f"{spec.massflow:.2f} kg/s"),
+        ("Max RPM", f"{spec.RPM_max:,.0f}"),
+        ("Max U_tip", f"{spec.U_tip_max:.0f} m/s"),
+        ("Max r_tip", f"{spec.r_tip_max_mm:.0f} mm"),
+        ("Max stages", f"{spec.n_stages_max}"),
+        ("Inlet", f"T0={spec.T0_in:.1f} K   P0={spec.P0_in:,.0f} Pa"),
+        ("Budget", ui.c(budget, "accent")),
+        ("Fidelity", ui.c(args.fidelity, "brand")),
+    ]
+    if spec.fixed_vars:
+        panel_rows.append(("Fixed vars", ui.c(
+            "  ".join(f"{k}={v:g}" for k, v in spec.fixed_vars.items()),
+            "accent")))
+    if args.seed is not None:
+        panel_rows.append(("Seed", f"{args.seed}"))
+    print(ui.panel("Specification", panel_rows))
+    print()
+    print(ui.rule("Autonomous optimization", "brand"))
+
+    if designer is not None:
+        result = designer.run(n_init=args.n_init, rounds=args.rounds,
+                              batch_size=args.batch_size,
+                              checkpoint_path=ckpt)
+    else:
+        result = design(spec, rounds=args.rounds, n_init=args.n_init,
+                        batch_size=args.batch_size, fidelity=fidelity,
+                        n_workers=args.workers, checkpoint_path=ckpt,
+                        log=logger, seed=args.seed)
+
+    emit_deliverables(args, spec, result, args.outdir, ckpt=ckpt,
+                      logger=logger)
     return 0
 
 

@@ -315,8 +315,18 @@ domain-agnostic. What Phy-AC provides is the domain adapter:
 * **Acquisition**: predicted-Pareto exploitation + high-σ exploration,
   k-means de-duplication, batch of 14 physical evaluations per round.
 * `DesignSpec(PR_target, massflow, RPM_max, U_tip_max, r_tip_max_mm,
-  n_stages_max, power_max_W, material)`; `n_stages` gets the same
-  continuous-variable/integer-physics treatment as `N_blades` in Phy-CC.
+  n_stages_max, power_max_W, material, fixed_vars)`; `n_stages` gets the
+  same continuous-variable/integer-physics treatment as `N_blades` in
+  Phy-CC. `fixed_vars` pins any of the 10 design variables (e.g.
+  `{"n_stages": 5, "phi1": 0.60}`): every evaluation path goes through
+  `fix_operating_point`, so the pinned dimension collapses for LHS,
+  NSGA-II and acquisition alike.
+* **Controllability** (CLI): `--seed` (default 71), `--fix VAR=VALUE`,
+  `--eval-theta` (direct evaluation of a given design, no optimization),
+  `--resume` (warm start from a checkpoint — the saved dataset replaces
+  the LHS and the surrogate retrains on it), `--list-pareto` /
+  `--pareto-pick N` (re-verify the front of a checkpoint with the
+  physics and regenerate the full deliverables for any point).
 
 ---
 

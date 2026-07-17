@@ -110,6 +110,27 @@ python phyac_cli.py --pr 4.0 --mdot 25 --rpm-max 18000 --utip-max 460 \
 python phyac_cli.py --pr 4.0 --mdot 25 --hifi-pairs cfx_pairs.json --outdir runs/cal
 ```
 
+### Controles del ingeniero en el lazo
+
+```bash
+# Fijar variables de diseño y optimizar el resto (repetible), semilla propia:
+python phyac_cli.py --pr 4 --mdot 25 --fix n_stages=5 --fix phi1=0.60 --seed 42
+
+# Evaluar UN diseño dado (sin optimizar) con los entregables completos
+# (las 10 variables de diseño — n_stages,RPM,HTR,phi1,psi_mid,psi_slope,
+#  Rx,sigma_r,sigma_s,AR — el punto de operación sale de los flags):
+python phyac_cli.py --eval-theta "4,12500,0.62,0.55,0.32,-0.10,0.60,1.20,1.10,2.20" \
+    --pr 4 --mdot 25 --outdir runs/eval --map
+
+# Reanudar una corrida desde su checkpoint (el dataset sustituye al LHS):
+python phyac_cli.py --outdir runs/pr4 --resume --rounds 3
+
+# Inspeccionar el frente de Pareto verificado de una corrida terminada y
+# regenerar los entregables (reporte/geometría/STL) de cualquier punto:
+python phyac_cli.py --outdir runs/pr4 --list-pareto
+python phyac_cli.py --outdir runs/pr4 --pareto-pick 3 --stl
+```
+
 Control de interfaz: `--no-color` (texto plano, respeta `NO_COLOR`),
 `--quiet`/`-q` (solo hitos). El estilo vive en
 [`cli_style.py`](cli_style.py) (sin dependencias). Ejemplos completos:
@@ -165,7 +186,7 @@ Salidas de la fase C#: un STL por pieza más las vistas de unión
 | `AxialCompressorDesigner/` | 5c | Librería C# + PicoGK: importa `axial_compressor.json` (`PhyACImport`) y construye eje, discos-álabe y anillos de carcasa como STL imprimibles. |
 | `AxialCompressorDesigner.Example/` | 5c | Ejecutable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | producto | CLI end-to-end: espec → diseño → geometría → informe → dataset [→ STLs vía --stl/--voxel]. |
-| `test_phyac.py` | VV&UQ | Suite de verificación: 47 checks (triángulos, conservación, continuidad de g, perfiles, contrato, solver de disco, núcleo del optimizador, regresión de solapes). |
+| `test_phyac.py` | VV&UQ | Suite de verificación: 54 checks (triángulos, conservación, continuidad de g, perfiles, contrato, solver de disco, núcleo del optimizador, regresión de solapes). |
 | `validation/` | VV&UQ | Campaña de validación vs NASA Stage 35, Rotor 37/67 y GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## API Python (capas 1–5b)
@@ -262,7 +283,7 @@ Licencias de terceros: ver [README.md](README.md#third-party-licenses).
 ## Verificación y validación
 
 ```bash
-python test_phyac.py               # verificación: 47 checks
+python test_phyac.py               # verificación: 54 checks
 python validation/validate.py      # validación: máquinas NASA → RESULTS.md
 python data_pipeline.py            # anclas de datos: rebuild + SHA-256
 ```
@@ -309,6 +330,10 @@ predicción de pérdidas → (η, PR). Tabla vigente en
 
 ## Historia
 
+- **2026-07-16 — controlabilidad**: CLI con el ingeniero en el lazo
+  (`--fix`, `--seed`, `--eval-theta`, warm start `--resume`,
+  `--list-pareto`/`--pareto-pick`); `.gitattributes` corrige el fallo
+  del hash de anclas por CRLF en clones Windows frescos.
 - **2026-07-11 — v0.1**: proyecto creado desde el patrón Phy-CC (θ 13-D
   con radio de punta derivado de continuidad; conversión
   arrastre→pérdida del endwall y normalización de Koch corregidas durante
