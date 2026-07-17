@@ -550,6 +550,24 @@ check("evaluate_design: 12 valores (10 diseño + 2 pendientes)",
       len(res12["theta"]) == 15 and res12["theta"][13] == -0.15
       and res12["record"]["PR"] > 1.0)
 
+# STEP de ensamble (fase 8.2) — condicional a la dependencia opcional
+try:
+    import cadquery as _cq_mod          # noqa: F401
+    _has_cq = True
+except Exception:
+    _has_cq = False
+if _has_cq:
+    with tempfile.TemporaryDirectory() as td:
+        _paths = gg.export_step(contract, td, mode="parts")
+        _names = {os.path.basename(p) for p in _paths}
+        check("export_step(parts): Shaft + piezas por etapa + README",
+              "Shaft.step" in _names and "README.txt" in _names
+              and any(n.startswith("RotorStage") for n in _names)
+              and all(os.path.getsize(p) > 0 for p in _paths))
+else:
+    check("export_step: cadquery no instalado — degradación silenciosa "
+          "(SKIP)", gg.export_step(contract, ".", mode="parts") == [])
+
 # ==========================================================================
 print(f"\n{_n_pass}/{_n_pass + _n_fail} checks OK"
       + (f" — {_n_fail} FALLOS" if _n_fail else ""))

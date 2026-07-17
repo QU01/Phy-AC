@@ -142,6 +142,16 @@ def parse_args(argv=None):
                    help="JSON with CFD calibration pairs")
     o.add_argument("--stl", action="store_true",
                    help="generate rotor/casing STL files (default 0.5mm voxel)")
+    o.add_argument("--step", action="store_true",
+                   help="export STEP for re-CAD (optional `step` extra / "
+                        "CadQuery): exact revolved solids + one sample "
+                        "blade per row in machine coordinates")
+    o.add_argument("--step-mode", choices=["parts", "assembly", "blade0"],
+                   default="parts",
+                   help="STEP scope: one file per physical part (+ "
+                        "parts/README.txt with blade counts, default), "
+                        "also a named cq.Assembly, or a single rotor-1 "
+                        "blade")
     o.add_argument("--voxel", type=float, default=None,
                    help="voxel resolution in mm for STL generation "
                         "(e.g. 0.3, 0.5, 0.8); implies --stl")
@@ -379,6 +389,20 @@ def emit_deliverables(args, spec, result, outdir, ckpt=None, logger=None,
     if ckpt and os.path.exists(ckpt):
         n_rows = export_dataset_csv(ckpt, os.path.join(outdir, "dataset.csv"))
         print("  " + ui.ok(f"dataset    → {n_rows} rows (flywheel)"))
+
+    # ---- STEP de ensamble para re-CAD (opcional, CadQuery) ----
+    if getattr(args, "step", False):
+        contract_path = os.path.join(geo_dir, "axial_compressor.json")
+        with open(contract_path, encoding="utf-8") as f:
+            contract = json.load(f)
+        paths = geometry_generator.export_step(contract, geo_dir,
+                                               mode=args.step_mode)
+        if paths:
+            print("  " + ui.ok(f"step       → {len(paths)} files "
+                               f"({args.step_mode}) in {geo_dir}/"))
+        else:
+            print(ui.warn("cadquery not installed — STEP export skipped "
+                          "(pip install cadquery)"))
 
     # ---- Generación de STL con C# (opcional) ----
     if args.stl or args.voxel is not None:

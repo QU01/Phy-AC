@@ -165,7 +165,10 @@ triángulos, annulus, márgenes estructurales, BCs de CFD y trazabilidad —
 más la sección matplotlib si está instalado; se omite con
 `--no-figures`), `figures/`, `geometry/` (`axial_compressor.json` — el
 contrato schema `phyac-axial-1` que consume la capa 5c —, `annulus.csv`,
-`stage_summary.csv`, `bom.csv`, `blade_stage0.step` si CadQuery está
+`stage_summary.csv`, `bom.csv`, con `--step` el STEP de re-CAD de la
+máquina — `parts/*.step` por pieza física con un álabe de muestra +
+conteos en `parts/README.txt`, o ensamble nombrado con
+`--step-mode assembly` —, `blade_stage0.step` si CadQuery está
 disponible), `dataset.csv` (flywheel de datos), `phyac_run.json`
 (checkpoint trazable), `phys_cache.jsonl` (caché persistente de
 evaluaciones L1), `map.csv` con `--map`.
@@ -188,7 +191,7 @@ Salidas de la fase C#: un STL por pieza más las vistas de unión
 | `AxialCompressorDesigner/` | 5c | Librería C# + PicoGK: importa `axial_compressor.json` (`PhyACImport`) y construye eje, discos-álabe y anillos de carcasa como STL imprimibles. |
 | `AxialCompressorDesigner.Example/` | 5c | Ejecutable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | producto | CLI end-to-end: espec → diseño → geometría → informe → dataset [→ STLs vía --stl/--voxel]. |
-| `test_phyac.py` | VV&UQ | Suite de verificación: 79 checks (triángulos, conservación, continuidad de g, perfiles, contrato, solver de disco, núcleo del optimizador, regresión de solapes). |
+| `test_phyac.py` | VV&UQ | Suite de verificación: 80 checks (triángulos, conservación, continuidad de g, perfiles, contrato, solver de disco, núcleo del optimizador, regresión de solapes). |
 | `validation/` | VV&UQ | Campaña de validación vs NASA Stage 35, Rotor 37/67 y GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## API Python (capas 1–5b)
@@ -290,7 +293,7 @@ Licencias de terceros: ver [README.md](README.md#third-party-licenses).
 ## Verificación y validación
 
 ```bash
-python test_phyac.py               # verificación: 79 checks
+python test_phyac.py               # verificación: 80 checks
 python validation/validate.py      # validación: máquinas NASA → RESULTS.md
 python data_pipeline.py            # anclas de datos: rebuild + SHA-256
 ```
@@ -342,6 +345,12 @@ predicción de pérdidas → (η, PR). Tabla vigente en
 
 ## Historia
 
+- **2026-07-17 — STEP de ensamble (fase 8.2)**: `--step` exporta STEP
+  de re-CAD en coordenadas de máquina (eje/hub/carcasa de revolución
+  con bridas apernadas desde el contrato, álabe de muestra por fila con
+  loft spline incl. IGV/OGV, `parts/README.txt` con los conteos para el
+  patrón; `--step-mode assembly` para un cq.Assembly nombrado).
+  CadQuery sigue siendo opcional con degradación silenciosa.
 - **2026-07-17 — θ por etapa (fase 8)**: vector de diseño 15-D con
   pendientes lineales de φ/Rx añadidas AL FINAL (los índices del punto
   de operación no se mueven); los θ legacy de 13, checkpoints y anclas

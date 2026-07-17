@@ -163,7 +163,10 @@ section when installed; skip with `--no-figures`), `figures/`, `geometry/`
 (`axial_compressor.json` — the schema `phyac-axial-1` contract consumed by
 layer 5c, with per-row camber sections, annulus polylines, assembly
 parameters and the structural block —, `annulus.csv`, `stage_summary.csv`,
-`bom.csv`, `blade_stage0.step` if CadQuery is available), `dataset.csv`
+`bom.csv`, `blade_stage0.step` if CadQuery is available; with `--step`,
+re-CAD STEP of the machine — `parts/*.step` per physical part with one
+sample blade + blade counts in `parts/README.txt`, or a named assembly
+with `--step-mode assembly`), `dataset.csv`
 (data flywheel), `phyac_run.json` (traceable checkpoint), `phys_cache.jsonl`
 (persistent cache of expensive L1 evaluations), `map.csv` with `--map`.
 
@@ -184,7 +187,7 @@ C# phase outputs: one STL per part plus the union views (binary, in mm).
 | `AxialCompressorDesigner/` | 5c | C# library + PicoGK: imports `axial_compressor.json` (`PhyACImport`) and builds shaft, bladed discs and casing rings as printable STLs. |
 | `AxialCompressorDesigner.Example/` | 5c | Executable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | product | End-to-end CLI: spec → design → geometry → report → dataset [→ STLs via --stl/--voxel]. |
-| `test_phyac.py` | VV&UQ | Verification suite: 79 checks (triangles, conservation, g continuity, profiles, contract, disc solver, optimizer core, overlap regression). |
+| `test_phyac.py` | VV&UQ | Verification suite: 80 checks (triangles, conservation, g continuity, profiles, contract, disc solver, optimizer core, overlap regression). |
 | `validation/` | VV&UQ | Validation campaign vs NASA Stage 35, Rotor 37/67 and GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## Python API (layers 1–5b)
@@ -283,7 +286,7 @@ Phy-AC/
 ├── report_generator.py                   layer 5b  self-contained HTML report
 ├── visualization.py                      layer 5b  matplotlib figures (optional)
 ├── phyac_cli.py                          end-to-end CLI (spec → design → report [→ STLs])
-├── test_phyac.py                         verification suite (79 checks)
+├── test_phyac.py                         verification suite (80 checks)
 │
 ├── validation/                           validation campaign (machines.py, validate.py)
 ├── data/                                 in-repo correlation anchors + manifest.json
@@ -368,7 +371,7 @@ independent voxel fields built in the same `Library.Go` session.
 ## Verification and Validation
 
 ```bash
-python test_phyac.py               # verification: 79 checks
+python test_phyac.py               # verification: 80 checks
 python validation/validate.py      # validation: NASA machines → RESULTS.md
 python data_pipeline.py            # data anchors: rebuild + SHA-256 verify
 ```
@@ -425,6 +428,12 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
 
 ## History
 
+- **2026-07-17 — assembly STEP (phase 8.2)**: `--step` exports re-CAD
+  STEP in machine coordinates (revolved shaft/hub/casing with bolted
+  flanges from the contract, spline-lofted sample blade per row incl.
+  IGV/OGV, `parts/README.txt` with pattern counts; `--step-mode
+  assembly` for a named cq.Assembly). CadQuery stays optional with
+  silent degradation.
 - **2026-07-17 — per-stage θ (phase 8)**: 15-D design vector with linear
   φ/Rx front→rear slopes appended at the end (operating-point indices
   untouched); legacy 13-D θ, checkpoints and anchors are padded with

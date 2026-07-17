@@ -352,30 +352,254 @@ def cfx_boundary_conditions(theta: np.ndarray, record: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# STEP opcional (extra `step`, estilo turbodesigner con CadQuery)
+# STEP de ensamble (extra `step`, CadQuery — fase 8.2)
 # ---------------------------------------------------------------------------
-def try_export_step(contract: dict, path: str) -> bool:
-    """Loft CadQuery de UN álabe del primer rotor (demostración STEP).
-    Devuelve False sin error si cadquery no está instalado."""
+# El export STEP existe para RE-CAD (NX/CATIA/FreeCAD): sólidos de
+# revolución exactos (eje, casco del hub, carcasa con bridas) + álabes por
+# loft SPLINE de las secciones `points` del contrato, en coordenadas de
+# máquina (Z = eje de rotación). Decisiones documentadas:
+#   * Álabes lofteados entre planos radiales PARALELOS (X = r constante) —
+#     la aproximación estándar de re-CAD; el envolvimiento cilíndrico
+#     exacto (φ = y/r) solo lo tiene el STL voxelizado.
+#   * En modo "parts" cada pieza lleva UN álabe de muestra + el conteo en
+#     parts/README.txt (el patrón circular de 40-60 álabes × fila en OCC
+#     tarda minutos y multiplica el tamaño del STEP por >10 — el patrón
+#     se aplica en el CAD destino en segundos).
+#   * Omisiones (solo STL): puerto de sangrado, fillets de raíz.
+# CadQuery sigue siendo OPCIONAL: sin él, export_step devuelve [] sin
+# error (patrón de degradación del proyecto).
+
+def _cq():
     try:
         import cadquery as cq
+        return cq
     except Exception:
-        return False
+        return None
+
+
+def _cq_blade_solid(cq, row: dict, z_center: float):
+    """UN álabe de una fila, en coordenadas de máquina.
+
+    Cada sección (marco de cuerda, centroide en el origen) se rota por su
+    stagger firmado y se posa en el plano radial X = r (workplane "YZ":
+    u→Y tangencial, v→Z axial); loft spline entre planos paralelos y
+    traslación al z del eje de stacking de la fila."""
+    secs = row["sections"]
+    wp = None
+    r_prev = None
+    for sec in secs:
+        g = math.radians(sec["stagger_deg"])
+        cg, sg = math.cos(g), math.sin(g)
+        pts2 = [(px * sg + py * cg,            # u → Y (tangencial)
+                 px * cg - py * sg)            # v → Z (axial, staggered)
+                for px, py in sec["points"]]
+        r = float(sec["r_mm"])
+        if wp is None:
+            wp = cq.Workplane("YZ", origin=(r, 0.0, 0.0))
+        else:
+            wp = wp.workplane(offset=r - r_prev)
+        wp = wp.polyline(pts2).close()
+        r_prev = r
+    return wp.loft(ruled=False).translate((0.0, 0.0, z_center))
+
+
+def _cq_ring(cq, r_in: float, r_out: float, z0: float, z1: float):
+    """Anillo macizo de revolución (r_in→r_out, z0→z1) alrededor de Z."""
+    return (cq.Workplane("XZ")
+            .polyline([(r_in, z0), (r_out, z0), (r_out, z1), (r_in, z1)])
+            .close().revolve(360.0, (0, 0), (0, 1)))
+
+
+def _cq_line_ring(cq, line: list, wall: float, z0: float, z1: float,
+                  outward: bool, n_pts: int = 24):
+    """Casco de revolución que sigue una polilínea (z, r) del annulus en
+    [z0, z1]: pared `wall` hacia fuera (carcasa) o hacia dentro (hub)."""
+    zs = np.linspace(z0, z1, n_pts)
+    zl = [p[0] for p in line]
+    rl = [p[1] for p in line]
+    rs = np.interp(zs, zl, rl)
+    inner = [(float(r) + (0.0 if outward else -wall), float(z))
+             for z, r in zip(zs, rs)]
+    outer = [(float(r) + (wall if outward else 0.0), float(z))
+             for z, r in zip(zs, rs)]
+    prof = inner + outer[::-1]
+    return (cq.Workplane("XZ").polyline(prof).close()
+            .revolve(360.0, (0, 0), (0, 1)))
+
+
+def _cq_part_solids(cq, contract: dict) -> dict:
+    """Sólidos por PIEZA (mismos nombres que los STL de la capa 5c), con
+    UN álabe de muestra por fila. Devuelve {nombre: solid}."""
+    asm = contract["assembly"]
+    ann = contract["annulus"]
+    stages = contract["stages"]
+    n_st = len(stages)
+    clr = float(ann["tip_clearance_mm"])
+    wall = float(asm.get("hub_wall_mm", 5.0))
+    r_shaft = float(contract.get("structural", {})
+                    .get("drum_inner_r_mm", 20.0))
+    hub, tip = ann["hub"], ann["tip"]
+    z_in, z_out = hub[0][0], hub[-1][0]
+
+    def split_after(i: int) -> float:
+        te = stages[i]["stator"]["z_te_mm"]
+        nxt = stages[i + 1]["rotor"]["z_le_mm"] if i + 1 < n_st else te + 4.0
+        return 0.5 * (te + nxt)
+
+    parts: dict = {}
+    # Eje: cilindro con muñones y barreno (igual que RotorDrum.voxShaft)
+    stub = float(asm.get("shaft_stub_mm", 30.0))
+    bore = float(asm.get("shaft_bore_frac", 0.35)) * r_shaft
+    shaft = _cq_ring(cq, max(bore, 0.0), r_shaft, z_in - stub, z_out + stub) \
+        if bore > 0.5 else _cq_ring(cq, 0.0, r_shaft, z_in - stub,
+                                    z_out + stub)
+    parts["Shaft"] = shaft
+
+    for i, st in enumerate(stages):
+        z0 = z_in if i == 0 else split_after(i - 1)
+        z1 = z_out if i == n_st - 1 else split_after(i)
+        rot = st["rotor"]
+        web = min(max(float(asm.get("disk_web_frac", 0.5))
+                      * (rot["z_te_mm"] - rot["z_le_mm"]),
+                      float(asm.get("disk_web_min_mm", 4.0))),
+                  float(asm.get("disk_web_max_mm", 14.0)))
+        zc = rot["z_center_mm"]
+        r_hub_c = float(np.interp(zc, [p[0] for p in hub],
+                                  [p[1] for p in hub]))
+        solid = _cq_line_ring(cq, hub, wall, z0, z1, outward=False)
+        solid = solid.union(_cq_ring(cq, r_shaft, r_hub_c,
+                                     zc - 0.5 * web, zc + 0.5 * web))
+        solid = solid.union(_cq_blade_solid(cq, rot, zc))
+        parts[f"RotorStage{i + 1}"] = solid
+
+    lip = 4.0
+    for i, st in enumerate(stages):
+        z0 = (tip[0][0] - lip) if i == 0 else split_after(i - 1)
+        z1 = (tip[-1][0] + lip) if i == n_st - 1 else split_after(i)
+        # el casco vive a tip+holgura (annulus pasante)
+        shell_line = [[z, r + clr] for z, r in tip]
+        solid = _cq_line_ring(cq, shell_line, wall, z0, z1, outward=True)
+        stat = st["stator"]
+        solid = solid.union(_cq_blade_solid(cq, stat, stat["z_center_mm"]))
+        if i == 0 and contract.get("igv"):
+            igv = contract["igv"]
+            solid = solid.union(_cq_blade_solid(cq, igv, igv["z_center_mm"]))
+        if i == n_st - 1 and contract.get("ogv"):
+            ogv = contract["ogv"]
+            solid = solid.union(_cq_blade_solid(cq, ogv, ogv["z_center_mm"]))
+        # bridas apernadas en el primer/último anillo
+        for at_start, has in ((True, i == 0), (False, i == n_st - 1)):
+            if not has:
+                continue
+            zf = z0 if at_start else z1 - float(asm.get("flange_t_mm", 8.0))
+            r_tip_f = float(np.interp(z0 if at_start else z1,
+                                      [p[0] for p in tip],
+                                      [p[1] for p in tip]))
+            r_o = r_tip_f + clr + wall
+            fl = _cq_ring(cq, r_tip_f + clr, r_o
+                          + float(asm.get("flange_w_mm", 12.0)),
+                          zf, zf + float(asm.get("flange_t_mm", 8.0)))
+            n_b = int(asm.get("flange_bolt_count", 12))
+            r_b = r_o + 0.5 * float(asm.get("flange_w_mm", 12.0))
+            d_b = float(asm.get("flange_bolt_d_mm", 6.0))
+            for k in range(n_b):
+                a = 2.0 * math.pi * k / n_b
+                hole = (cq.Workplane("XY",
+                                     origin=(r_b * math.cos(a),
+                                             r_b * math.sin(a), zf - 1.0))
+                        .circle(0.5 * d_b).extrude(
+                            float(asm.get("flange_t_mm", 8.0)) + 2.0))
+                fl = fl.cut(hole)
+            solid = solid.union(fl)
+        parts[f"StatorRing{i + 1}"] = solid
+    return parts
+
+
+def _step_readme(contract: dict) -> str:
+    lines = [
+        "STEP de ensamble Phy-AC — notas de re-CAD",
+        "=========================================",
+        "Coordenadas de maquina: Z = eje de rotacion, mm.",
+        "Cada pieza lleva UN alabe/vano de muestra; aplicar el patron",
+        "circular en el CAD destino con estos conteos:",
+        "",
+    ]
+    for st in contract["stages"]:
+        i = st["index"] + 1
+        lines.append(f"  RotorStage{i}:  {st['rotor']['n_blades']} alabes "
+                     f"(eje de patron = Z)")
+        lines.append(f"  StatorRing{i}:  {st['stator']['n_blades']} vanos")
+    if contract.get("igv"):
+        lines.append(f"  IGV (en StatorRing1): "
+                     f"{contract['igv']['n_blades']} vanos")
+    if contract.get("ogv"):
+        n = len(contract["stages"])
+        lines.append(f"  OGV (en StatorRing{n}): "
+                     f"{contract['ogv']['n_blades']} vanos")
+    lines += [
+        "",
+        "Aproximaciones (exactas solo en el STL de la capa 5c):",
+        "  * alabes lofteados entre planos radiales paralelos (sin el",
+        "    envolvimiento cilindrico phi = y/r del voxelizado);",
+        "  * sin puerto de sangrado ni fillets de raiz;",
+        "  * holgura de punta: restar tip_clearance_mm del contrato.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def export_step(contract: dict, outdir: str, mode: str = "parts") -> list[str]:
+    """Exporta STEP del diseño. Devuelve las rutas escritas ([] sin
+    cadquery — degradación silenciosa, dependencia opcional `step`).
+
+    mode:
+      "blade0"   — UN álabe del primer rotor (rápido; compatibilidad).
+      "parts"    — una pieza STEP por parte física (nombres de los STL)
+                   con un álabe de muestra + parts/README.txt (default).
+      "assembly" — además, cq.Assembly con todas las piezas nombradas →
+                   assembly.step.
+    """
+    cq = _cq()
+    if cq is None:
+        return []
+    written: list[str] = []
     try:
-        row = contract["stages"][0]["rotor"]
-        loft = cq.Workplane("XY")
-        for sec in row["sections"]:
-            g = math.radians(sec["stagger_deg"])
-            cg, sg = math.cos(g), math.sin(g)
-            pts2 = [(px * cg - py * sg, px * sg + py * cg)
-                    for px, py in sec["points"]]
-            loft = loft.add(cq.Workplane("XY", origin=(0, 0, sec["r_mm"]))
-                            .polyline(pts2).close())
-        result = loft.toPending().loft(ruled=True)
-        cq.exporters.export(result, path)
-        return True
+        if mode == "blade0":
+            row = contract["stages"][0]["rotor"]
+            solid = _cq_blade_solid(cq, row, row["z_center_mm"])
+            path = os.path.join(outdir, "blade_stage0.step")
+            cq.exporters.export(solid, path)
+            return [path]
+
+        parts = _cq_part_solids(cq, contract)
+        pdir = os.path.join(outdir, "parts")
+        os.makedirs(pdir, exist_ok=True)
+        for name, solid in parts.items():
+            path = os.path.join(pdir, f"{name}.step")
+            cq.exporters.export(solid, path)
+            written.append(path)
+        readme = os.path.join(pdir, "README.txt")
+        with open(readme, "w", encoding="utf-8") as f:
+            f.write(_step_readme(contract))
+        written.append(readme)
+
+        if mode == "assembly":
+            asm = cq.Assembly()
+            for name, solid in parts.items():
+                asm.add(solid, name=name)
+            path = os.path.join(outdir, "assembly.step")
+            asm.save(path)
+            written.append(path)
+        return written
     except Exception:
-        return False
+        return written
+
+
+def try_export_step(contract: dict, path: str) -> bool:
+    """Compatibilidad: UN álabe del primer rotor (ahora loft spline vía
+    export_step). False sin error si cadquery no está instalado."""
+    out = export_step(contract, os.path.dirname(path) or ".", mode="blade0")
+    return bool(out)
 
 
 # ---------------------------------------------------------------------------
