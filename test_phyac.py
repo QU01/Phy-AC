@@ -199,6 +199,43 @@ check("mapa: speedline de diseño tiene rango estable",
 if sl["mdot_surge"] is not None:
     check("mapa: ṁ_choke > ṁ_surge", sl["mdot_choke"] >= sl["mdot_surge"])
 
+# bucket de incidencia W(M): se estrecha con Mach, rama negativa tolerante
+check("bucket: se estrecha con M y es 1 en incidencia nula",
+      pc._incidence_bucket(5.0, 0.9) > pc._incidence_bucket(5.0, 0.3) > 1.0
+      and pc._incidence_bucket(0.0, 0.9) == 1.0
+      and pc._incidence_bucket(60.0, 0.9) == 4.0)
+check("bucket: rama negativa 1.5× más tolerante",
+      pc._incidence_bucket(-5.0, 0.9) < pc._incidence_bucket(5.0, 0.9))
+# desviación off-design (Creveling): con incidencia positiva la ψ lograda
+# cae respecto al modelo congelado puro (sub-giro creciente hacia stall)
+od_ns = pc.offdesign(THETA_REF, rpm=float(THETA_REF[1]), mdot=21.0)
+_k_dev = pc.K_DEV_OFFDESIGN
+pc.K_DEV_OFFDESIGN = 0.0
+od_ns0 = pc.offdesign(THETA_REF, rpm=float(THETA_REF[1]), mdot=21.0)
+pc.K_DEV_OFFDESIGN = _k_dev
+check("desviación off-design: ψ y PR caen cerca de stall (i>0)",
+      od_ns["stage_table"][0]["incidence_deg"] > 2.0
+      and od_ns["stage_table"][0]["psi"] < od_ns0["stage_table"][0]["psi"]
+      and od_ns["PR"] < od_ns0["PR"],
+      f"ψ0 {od_ns['stage_table'][0]['psi']:.3f} vs "
+      f"{od_ns0['stage_table'][0]['psi']:.3f}")
+# VSV: a 0.7N el schedule auto descarga las etapas frontales; a 1.0N nada
+mp_fix = pc.compressor_map(THETA_REF, speed_fracs=(0.7, 1.0), n_points=11)
+mp_vsv = pc.compressor_map(THETA_REF, speed_fracs=(0.7, 1.0), n_points=11,
+                           vsv="auto")
+_stall_fix = sum(p["stall"] for p in mp_fix["speedlines"][0]["points"])
+_stall_vsv = sum(p["stall"] for p in mp_vsv["speedlines"][0]["points"])
+check("VSV auto: menos puntos en stall a 0.7N que geometría fija",
+      mp_vsv["speedlines"][0]["vsv_deg"] > 0.0
+      and _stall_vsv < _stall_fix,
+      f"{_stall_vsv} vs {_stall_fix} (VSV "
+      f"{mp_vsv['speedlines'][0]['vsv_deg']:.0f}°)")
+check("VSV auto: speedline de diseño idéntica (VSV=0 a N=Nd)",
+      mp_vsv["speedlines"][1]["vsv_deg"] == 0.0
+      and all(abs(a["PR"] - b["PR"]) < 1e-12
+              for a, b in zip(mp_fix["speedlines"][1]["points"],
+                              mp_vsv["speedlines"][1]["points"])))
+
 # ==========================================================================
 print("— T6 · perfiles y ángulos metálicos")
 for name, fn in (("NACA65", bp.naca65_profile), ("DCA", bp.dca_profile)):

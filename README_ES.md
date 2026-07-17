@@ -51,7 +51,7 @@ fuera de diseño, carga por etapa, annulus meridional y secciones de álabe.
 </tr>
 <tr>
 <td align="center"><sub><b>Carga por etapa</b> — ψ, DF de Lieblein y margen de bombeo de Koch; línea roja = SM mínimo exigido por g</sub></td>
-<td align="center"><sub><b>Mapa fuera de diseño</b> — speedlines PR(ṁ) con línea de bombeo y choke (proxy de tendencia L0, geometría congelada)</sub></td>
+<td align="center"><sub><b>Mapa fuera de diseño</b> — speedlines PR(ṁ) con línea de bombeo y choke (proxy de tendencia L0; geometría fija o schedule VSV auto con --map-vsv)</sub></td>
 </tr>
 </table>
 
@@ -120,7 +120,7 @@ python phyac_cli.py --pr 4 --mdot 25 --fix n_stages=5 --fix phi1=0.60 --seed 42
 # (las 10 variables de diseño — n_stages,RPM,HTR,phi1,psi_mid,psi_slope,
 #  Rx,sigma_r,sigma_s,AR — el punto de operación sale de los flags):
 python phyac_cli.py --eval-theta "4,12500,0.62,0.55,0.32,-0.10,0.60,1.20,1.10,2.20" \
-    --pr 4 --mdot 25 --outdir runs/eval --map
+    --pr 4 --mdot 25 --outdir runs/eval --map    # --map-vsv: schedule VSV auto
 
 # Reanudar una corrida desde su checkpoint (el dataset sustituye al LHS):
 python phyac_cli.py --outdir runs/pr4 --resume --rounds 3
@@ -186,7 +186,7 @@ Salidas de la fase C#: un STL por pieza más las vistas de unión
 | `AxialCompressorDesigner/` | 5c | Librería C# + PicoGK: importa `axial_compressor.json` (`PhyACImport`) y construye eje, discos-álabe y anillos de carcasa como STL imprimibles. |
 | `AxialCompressorDesigner.Example/` | 5c | Ejecutable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | producto | CLI end-to-end: espec → diseño → geometría → informe → dataset [→ STLs vía --stl/--voxel]. |
-| `test_phyac.py` | VV&UQ | Suite de verificación: 63 checks (triángulos, conservación, continuidad de g, perfiles, contrato, solver de disco, núcleo del optimizador, regresión de solapes). |
+| `test_phyac.py` | VV&UQ | Suite de verificación: 68 checks (triángulos, conservación, continuidad de g, perfiles, contrato, solver de disco, núcleo del optimizador, regresión de solapes). |
 | `validation/` | VV&UQ | Campaña de validación vs NASA Stage 35, Rotor 37/67 y GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## API Python (capas 1–5b)
@@ -288,7 +288,7 @@ Licencias de terceros: ver [README.md](README.md#third-party-licenses).
 ## Verificación y validación
 
 ```bash
-python test_phyac.py               # verificación: 63 checks
+python test_phyac.py               # verificación: 68 checks
 python validation/validate.py      # validación: máquinas NASA → RESULTS.md
 python data_pipeline.py            # anclas de datos: rebuild + SHA-256
 ```
@@ -336,6 +336,15 @@ predicción de pérdidas → (η, PR). Tabla vigente en
 
 ## Historia
 
+- **2026-07-17 — off-design físico**: bucket de incidencia dependiente
+  del Mach (semiancho 10° → 3.5° entre M 0.2 y 0.8, Aungier 2003; rama
+  de choke 1.5× más ancha), desviación progresiva fuera de diseño
+  Δδ = 0.30·i⁺ (Creveling 1968 — la ψ lograda cae hacia stall), y
+  schedule automático de **estátores variables** en el mapa
+  (`--map-vsv`, Δ = 50°·(1−N/Nd) tope 35° decayendo a media máquina) —
+  sin VSVs las speedlines de velocidad parcial de máquinas PR ≳ 4 se
+  declaran extrapolación no física. Punto de diseño exactamente
+  invariante (anclas intactas).
 - **2026-07-17 — holgura de punta por fila**: ε pasa a ser ABSOLUTA en
   mm (crece relativa a los álabes traseros que encogen — el efecto
   físico que un ε/h fijo borraba), con los regímenes de Sakulkaew 2013

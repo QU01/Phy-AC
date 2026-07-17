@@ -50,7 +50,7 @@ map, per-stage loading, meridional annulus, and rotor blade sections.
 </tr>
 <tr>
 <td align="center"><sub><b>Stage loading</b> — ψ, Lieblein DF and Koch stall margin per stage; red line = minimum SM enforced by g</sub></td>
-<td align="center"><sub><b>Off-design map</b> — PR(ṁ) speedlines with surge line and choke (L0 trend proxy, frozen geometry)</sub></td>
+<td align="center"><sub><b>Off-design map</b> — PR(ṁ) speedlines with surge line and choke (L0 trend proxy; fixed geometry or auto VSV schedule with --map-vsv)</sub></td>
 </tr>
 </table>
 
@@ -117,7 +117,7 @@ python phyac_cli.py --pr 4 --mdot 25 --fix n_stages=5 --fix phi1=0.60 --seed 42
 # (the 10 design vars — n_stages,RPM,HTR,phi1,psi_mid,psi_slope,Rx,
 #  sigma_r,sigma_s,AR — the operating point comes from the spec flags):
 python phyac_cli.py --eval-theta "4,12500,0.62,0.55,0.32,-0.10,0.60,1.20,1.10,2.20" \
-    --pr 4 --mdot 25 --outdir runs/eval --map
+    --pr 4 --mdot 25 --outdir runs/eval --map     # --map-vsv: auto VSV schedule
 
 # Warm-start a run from its checkpoint (dataset replaces the LHS):
 python phyac_cli.py --outdir runs/pr4 --resume --rounds 3
@@ -182,7 +182,7 @@ C# phase outputs: one STL per part plus the union views (binary, in mm).
 | `AxialCompressorDesigner/` | 5c | C# library + PicoGK: imports `axial_compressor.json` (`PhyACImport`) and builds shaft, bladed discs and casing rings as printable STLs. |
 | `AxialCompressorDesigner.Example/` | 5c | Executable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | product | End-to-end CLI: spec → design → geometry → report → dataset [→ STLs via --stl/--voxel]. |
-| `test_phyac.py` | VV&UQ | Verification suite: 63 checks (triangles, conservation, g continuity, profiles, contract, disc solver, optimizer core, overlap regression). |
+| `test_phyac.py` | VV&UQ | Verification suite: 68 checks (triangles, conservation, g continuity, profiles, contract, disc solver, optimizer core, overlap regression). |
 | `validation/` | VV&UQ | Validation campaign vs NASA Stage 35, Rotor 37/67 and GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## Python API (layers 1–5b)
@@ -281,7 +281,7 @@ Phy-AC/
 ├── report_generator.py                   layer 5b  self-contained HTML report
 ├── visualization.py                      layer 5b  matplotlib figures (optional)
 ├── phyac_cli.py                          end-to-end CLI (spec → design → report [→ STLs])
-├── test_phyac.py                         verification suite (63 checks)
+├── test_phyac.py                         verification suite (68 checks)
 │
 ├── validation/                           validation campaign (machines.py, validate.py)
 ├── data/                                 in-repo correlation anchors + manifest.json
@@ -366,7 +366,7 @@ independent voxel fields built in the same `Library.Go` session.
 ## Verification and Validation
 
 ```bash
-python test_phyac.py               # verification: 63 checks
+python test_phyac.py               # verification: 68 checks
 python validation/validate.py      # validation: NASA machines → RESULTS.md
 python data_pipeline.py            # data anchors: rebuild + SHA-256 verify
 ```
@@ -420,6 +420,14 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
 
 ## History
 
+- **2026-07-17 — physical off-design**: Mach-dependent incidence bucket
+  (half-width 10° → 3.5° between M 0.2 and 0.8, Aungier 2003;
+  choke-side branch 1.5× wider), progressive off-design deviation
+  Δδ = 0.30·i⁺ (Creveling 1968 — achieved ψ falls toward stall), and an
+  auto **variable-stator schedule** in the map (`--map-vsv`,
+  Δ = 50°·(1−N/Nd) capped 35° fading to mid-machine) — without VSVs the
+  part-speed lines of PR ≳ 4 machines are declared unphysical
+  extrapolation. Design point exactly invariant (anchors untouched).
 - **2026-07-17 — per-row tip clearance**: ε is now ABSOLUTE in mm
   (grows relative to the shrinking rear blades — the physical effect a
   fixed ε/h erased), with the Sakulkaew 2013 regimes (optimum below

@@ -123,6 +123,20 @@ K_SHOCK = 0.70                # multiplicador de pérdida de choque. El
 #                               Stage 35 dentro de tolerancia.
 MX_CHOKE = 0.78               # Mach axial máx. antes de declarar choke local
 
+# --- Off-design (2026-07-17): bucket W(M), desviación y VSV ---------------
+W_INC_LOW_DEG = 10.0    # semiancho del bucket de incidencia a M_rel <= 0.2
+#                         (comportamiento clásico de baja velocidad)
+W_INC_HIGH_DEG = 3.5    # semiancho a M_rel >= 0.8 — el rango de incidencia
+#                         útil se ESTRECHA con el Mach (Aungier 2003,
+#                         off-design performance; a M≈0.8 el bucket real es
+#                         ±2-4°, no ±10°)
+K_DEV_OFFDESIGN = 0.30  # dδ/di con incidencia POSITIVA (sub-giro creciente
+#                         hacia stall — Creveling 1968, NASA CR-72427;
+#                         práctica SP-36). En i<=0 no aplica.
+VSV_GAIN_DEG = 50.0     # cierre de VSV por unidad de defecto de velocidad
+#                         (schedule "auto" del mapa: Δ = GAIN·(1−N/Nd))
+VSV_MAX_DEG = 35.0      # tope físico del restagger de estátores frontales
+
 # Work-done factor de Howell (mediado por nº de etapa; tabla clásica)
 _HOWELL_WDF = [0.982, 0.952, 0.929, 0.910, 0.895, 0.883, 0.875, 0.868]
 
@@ -447,16 +461,42 @@ def _static_from_mach(mx: float, T0: float, P0: float,
     return T, P, rho, Cx
 
 
+def _incidence_bucket(inc_deg: float, m1_rel: float) -> float:
+    """Multiplicador de pérdida de perfil por incidencia fuera de diseño.
+
+    Bucket parabólico con SEMIANCHO dependiente del Mach relativo de
+    entrada: W = W_LOW → W_HIGH linealmente entre M 0.2 y 0.8 (Aungier
+    2003 — el rango de incidencia útil se estrecha drásticamente con M;
+    a bajo M reproduce el bucket clásico de ±10°). Rama de incidencia
+    NEGATIVA 1.5× más tolerante (práctica estándar: el lado de choke del
+    bucket es más ancho que el de stall). Continuo en inc y M; tope ×4
+    (bucket saturado — el punto ya está profundamente separado).
+    """
+    m = min(max(m1_rel, 0.0), 1.2)
+    f = min(max((m - 0.2) / 0.6, 0.0), 1.0)
+    w = W_INC_LOW_DEG - (W_INC_LOW_DEG - W_INC_HIGH_DEG) * f
+    if inc_deg < 0.0:
+        w *= 1.5
+    return min(1.0 + (inc_deg / w) ** 2, 4.0)
+
+
 def _meanline(theta: np.ndarray, rpm: float | None = None,
               mdot: float | None = None,
-              frozen: dict | None = None) -> dict:
+              frozen: dict | None = None,
+              vsv_deg: float = 0.0) -> dict:
     """Stage-stacking 1-D en la línea media, termodinámicamente consistente.
 
     Punto de diseño: `_meanline(theta)` — los ángulos de flujo salen de
     (φ, ψᵢ, Rx) y el álabe se talla a incidencia cero (convención del
     generador de geometría). Fuera de diseño: pasar `rpm`/`mdot` y
     `frozen` (dict devuelto en record["frozen"] del diseño: ángulos de
-    flujo y áreas congelados); la incidencia paga una pérdida parabólica.
+    flujo y áreas congelados); la incidencia paga el bucket W(M) de
+    `_incidence_bucket`, y el sub-giro por desviación crece con la
+    incidencia positiva (K_DEV_OFFDESIGN). `vsv_deg` > 0 cierra los
+    estátores variables frontales (más pre-swirl → menos incidencia del
+    rotor a baja velocidad): ángulo pleno en la etapa 0 decayendo
+    linealmente a 0 hacia la etapa n/2. En diseño (i = 0, vsv = 0) nada
+    de esto altera el resultado.
 
     Convención de triángulos (Dixon, ángulos desde el eje, Cx constante
     en el diseño): Cu1/U = 1−Rx−ψ/2, Cu2/U = 1−Rx+ψ/2,
@@ -532,6 +572,16 @@ def _meanline(theta: np.ndarray, rpm: float | None = None,
 
         if off_design:
             tan_a1 = frozen["alpha1"][i]
+            # VSV: cerrar los estátores frontales añade pre-swirl al rotor
+            # siguiente (menos incidencia a baja N). Ángulo pleno en la
+            # etapa 0, decayendo linealmente a 0 hacia la etapa n/2.
+            if vsv_deg:
+                n_half = max(n_st // 2, 1)
+                fade = max(1.0 - i / n_half, 0.0)
+                if fade > 0.0:
+                    a1_new = math.atan(tan_a1) \
+                        + math.radians(vsv_deg * fade)
+                    tan_a1 = math.tan(min(a1_new, 1.45))
             tan_b2_fr = frozen["beta2"][i]
             A_in = frozen["areas"][i]
         else:
@@ -548,9 +598,21 @@ def _meanline(theta: np.ndarray, rpm: float | None = None,
         T1, P1, rho1, Cx = _static_from_mach(mx, T0, P0, swirl_tan=tan_a1)
         phi = Cx / max(U, 1e-3)
 
+        inc_deg = 0.0
         if off_design:
-            # geometría congelada: α1 y β2 metálicos fijos → ψ emergente
-            tan_b2 = tan_b2_fr
+            # geometría congelada: α1 y β2 metálicos fijos → ψ emergente.
+            # Desviación fuera de diseño (Creveling 1968 / SP-36): con
+            # incidencia POSITIVA el flujo sub-gira Δδ = k·i⁺ y la ψ
+            # lograda cae — la pendiente de la speedline cerca de surge
+            # se aplana de forma realista. En diseño i=0 ⇒ Δδ=0 (punto
+            # de diseño invariante). Clamps para θ degenerados: Δδ ≤ 10°,
+            # β2 ≤ 83° — g queda continuo.
+            tan_b1_fr = (U - Cx * tan_a1) / max(Cx, 1e-3)
+            inc_deg = math.degrees(math.atan(tan_b1_fr)) \
+                - frozen["beta1_deg"][i]
+            ddev = min(K_DEV_OFFDESIGN * max(inc_deg, 0.0), 10.0)
+            b2_eff = min(math.atan(tan_b2_fr) + math.radians(ddev), 1.45)
+            tan_b2 = math.tan(b2_eff)
             psi_eff = 1.0 - phi * (tan_a1 + tan_b2)
             psi_eff = float(np.clip(psi_eff, -0.2, 0.9))
             Cu1 = Cx * tan_a1
@@ -624,13 +686,11 @@ def _meanline(theta: np.ndarray, rpm: float | None = None,
         M2_abs = C2 / a1_sound
         om_s, dh_s, det_s = _row_losses(a2r, a1r, C2, C1, sigma_s, h_c_s,
                                         M2_abs, M2_abs, re_c=Re_s)
-        # Fuera de diseño: bucket parabólico de incidencia sobre el rotor
-        inc_deg = 0.0
+        # Fuera de diseño: bucket de incidencia sobre el rotor con
+        # semiancho dependiente del Mach (Aungier 2003) — la incidencia
+        # ya se calculó arriba (misma β1: tanβ1 = (U−Cu1)/Cx).
         if off_design:
-            b1_design = frozen["beta1_deg"][i]
-            inc_deg = math.degrees(b1) - b1_design
-            bucket = 1.0 + (inc_deg / 10.0) ** 2
-            dh_r *= min(bucket, 4.0)
+            dh_r *= _incidence_bucket(inc_deg, M1_rel_mean)
         # Holgura de punta (solo rotor): ε ABSOLUTA en mm ⇒ ε/h crece
         # hacia las etapas traseras (h cae) — pérdida por fila, no débito
         # uniforme. Modelo por tramos de _clearance_loss_frac.
@@ -825,25 +885,35 @@ def _meanline(theta: np.ndarray, rpm: float | None = None,
 # 2b. Fuera de diseño y mapa de operación (L0)
 # ==========================================================================
 def offdesign(theta: np.ndarray, rpm: float, mdot: float,
-              frozen: dict | None = None) -> dict:
+              frozen: dict | None = None, vsv_deg: float = 0.0) -> dict:
     """Evalúa el diseño theta en otro punto (RPM, ṁ) con la geometría
-    congelada del diseño (ángulos de flujo y áreas)."""
+    congelada del diseño (ángulos de flujo y áreas). `vsv_deg` cierra los
+    estátores variables frontales (ver _meanline)."""
     theta = np.asarray(theta, dtype=float)
     if frozen is None:
         frozen = _meanline(theta)["frozen"]
     frozen = dict(frozen)
     frozen.setdefault("phi_d", float(theta[3]))
-    return _meanline(theta, rpm=rpm, mdot=mdot, frozen=frozen)
+    return _meanline(theta, rpm=rpm, mdot=mdot, frozen=frozen,
+                     vsv_deg=vsv_deg)
 
 
 def compressor_map(theta: np.ndarray,
                    speed_fracs=(0.7, 0.8, 0.9, 1.0, 1.05),
-                   mdot_range=(0.55, 1.25), n_points=17) -> dict:
+                   mdot_range=(0.55, 1.25), n_points=17,
+                   vsv: str = "none") -> dict:
     """Mapa de operación L0: speedlines PR(ṁ) con marcadores de límite.
 
     Surge: SM de Koch <= 0 o rama de pendiente positiva a la izquierda del
     pico de PR. Choke: continuidad sin raíz subsónica en alguna estación.
     Da la TENDENCIA; recalibrar contra CFD/banco (docs/VALIDATION.md).
+
+    `vsv`: "none" = geometría fija (default). Para PR ≳ 4 las speedlines
+    de baja velocidad con geometría fija son EXTRAPOLACIÓN NO FÍSICA —
+    las etapas frontales están en stall profundo; es la razón histórica
+    de los estátores variables (J79). Con "auto", cada speedline cierra
+    los VSV frontales Δ = VSV_GAIN_DEG·(1−N/Nd) (tope VSV_MAX_DEG, solo
+    a N < Nd) — schedule lineal realista de primer orden.
     """
     theta = np.asarray(theta, dtype=float)
     base = _meanline(theta)
@@ -854,9 +924,13 @@ def compressor_map(theta: np.ndarray,
                            eta_poly=base["eta_poly"]), speedlines=[])
     for fr in speed_fracs:
         rpm = fr * RPM_d
+        vsv_deg = 0.0
+        if vsv == "auto":
+            vsv_deg = min(VSV_GAIN_DEG * max(1.0 - fr, 0.0), VSV_MAX_DEG)
         pts = []
         for mm in np.linspace(mdot_range[0], mdot_range[1], n_points) * mdot_d:
-            r = _meanline(theta, rpm=rpm, mdot=float(mm), frozen=frozen)
+            r = _meanline(theta, rpm=rpm, mdot=float(mm), frozen=frozen,
+                          vsv_deg=vsv_deg)
             pts.append(dict(
                 mdot=float(mm), PR=r["PR"], eta_poly=r["eta_poly"],
                 min_SM=r["min_SM"], M_rel_tip1=r["M_rel_tip1"],
@@ -867,7 +941,8 @@ def compressor_map(theta: np.ndarray,
             p["unstable"] = bool(j < i_peak)
         valid = [p for p in pts if not (p["unstable"] or p["choke"] or p["stall"])]
         out["speedlines"].append(dict(
-            rpm=float(rpm), speed_frac=float(fr), points=pts,
+            rpm=float(rpm), speed_frac=float(fr), vsv_deg=float(vsv_deg),
+            points=pts,
             mdot_surge=float(valid[0]["mdot"]) if valid else None,
             mdot_choke=float(valid[-1]["mdot"]) if valid else None))
     return out

@@ -204,11 +204,37 @@ $$C_h = \frac{\Delta h_{static}}{\tfrac12\,(W_1^2 + C_2^2)}
 with limit 0.48 (Koch's 0.45–0.55 band) and minimum margin 0.10; exit
 Mach ≤ 0.55; last-stage blade height ≥ 8 mm (manufacturability).
 
-**Off-design** (`compressor_map`): frozen metal angles and areas;
-$\psi_{od} = 1 - \varphi\,(\tan\alpha_1 + \tan\beta_2)$; parabolic
-incidence bucket $\omega(i) = \omega^*(1 + (i/10°)^2)$ capped ×4; surge =
-Koch SM ≤ 0 or the positive-slope branch left of the PR peak; choke from
-station continuity.
+**Off-design** (`compressor_map`, upgraded 2026-07-17): frozen metal
+angles and areas; $\psi_{od} = 1 - \varphi\,(\tan\alpha_1 +
+\tan\beta_2)$; surge = Koch SM ≤ 0 or the positive-slope branch left of
+the PR peak; choke from station continuity. Three physical effects on
+top of the frozen-geometry model:
+
+* **Mach-dependent incidence bucket** (`_incidence_bucket`): parabolic
+  loss multiplier $\omega(i) = \omega^*(1 + (i/W)^2)$ capped ×4, with
+  half-width $W(M_1)$ falling linearly from 10° at $M_1 \le 0.2$ (the
+  classical low-speed bucket) to 3.5° at $M_1 \ge 0.8$ — the useful
+  incidence range narrows drastically with inlet Mach (Aungier 2003,
+  off-design performance; his full ranges also depend on θ and σ — the
+  Mach dependence is the first-order term). The negative-incidence
+  (choke-side) branch is 1.5× wider than the stall side, standard
+  practice.
+* **Off-design deviation** (Creveling 1968 / SP-36 practice): with
+  positive incidence the flow underturns progressively,
+  $\Delta\delta = 0.30\,i^+$ (capped 10°), applied to the frozen rotor
+  exit angle **before** the emergent ψ — the achieved work drops toward
+  stall and the speedline flattens realistically. At design $i = 0$, so
+  the design point is exactly invariant (the regression anchors did not
+  move — no refreeze).
+* **Variable stators** (`vsv="auto"`, CLI `--map-vsv`): without VSVs the
+  part-speed lines of a PR ≳ 4 fixed-geometry machine are **unphysical
+  extrapolation** — the front stages sit in deep stall (the historical
+  reason for the J79's variable stators). The auto schedule closes the
+  front VSVs by $\Delta = 50°\,(1 - N/N_d)$ (capped 35°, only below
+  design speed), full angle on stage 1 fading linearly to zero at
+  mid-machine: closing a front stator adds pre-swirl to the following
+  rotor and unloads it. Off-design shock loss (Boyer & O'Brien 2003)
+  remains unmodeled — declared limit.
 
 ---
 
@@ -495,6 +521,12 @@ the machinery is the same.
   IMechE 153.
 - Koch, C. C. (1981). *Stalling Pressure Rise Capability of Axial Flow
   Compressor Stages*. ASME J. Eng. Power 103.
+- Creveling, H. F. (1968). *Axial Flow Compressor Computer Program for
+  Calculating Off-Design Performance*. NASA CR-72427.
+- Boyer, K. M., & O'Brien, W. F. (2003). *An Improved Streamline
+  Curvature Approach for Off-Design Analysis of Transonic Axial
+  Compression Systems*. ASME J. Turbomach. 125(3) — off-design shock
+  loss reference (not yet modeled).
 - Koch, C. C., & Smith, L. H. (1976). *Loss Sources and Magnitudes in
   Axial-Flow Compressors*. ASME J. Eng. Power 98.
 - Wassell, A. B. (1968). *Reynolds Number Effects in Axial Compressors*.

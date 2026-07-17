@@ -125,6 +125,11 @@ def parse_args(argv=None):
     o.add_argument("--outdir", type=str, default="phyac_out")
     o.add_argument("--map", action="store_true",
                    help="generate off-design map of the final design")
+    o.add_argument("--map-vsv", action="store_true",
+                   help="close the front variable stators along each "
+                        "part-speed line (auto schedule) — without it, "
+                        "low-speed lines of PR>4 machines are unphysical "
+                        "fixed-geometry extrapolation; implies --map")
     o.add_argument("--hifi-pairs", type=str, default=None,
                    help="JSON with CFD calibration pairs")
     o.add_argument("--stl", action="store_true",
@@ -377,28 +382,33 @@ def emit_deliverables(args, spec, result, outdir, ckpt=None, logger=None,
             print(ui.warn(f"Could not find {contract_path} to generate STLs."))
 
     # ---- Mapa off-design opcional ----
-    if args.map:
-        mp = compressor_map(theta)
+    if args.map or args.map_vsv:
+        vsv_mode = "auto" if args.map_vsv else "none"
+        mp = compressor_map(theta, vsv=vsv_mode)
         map_path = os.path.join(outdir, "map.csv")
         with open(map_path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
-            w.writerow(["speed_frac", "rpm", "mdot_kgs", "PR", "eta_poly",
-                        "min_SM", "M_rel_tip1", "unstable", "stall",
-                        "choke"])
+            w.writerow(["speed_frac", "rpm", "vsv_deg", "mdot_kgs", "PR",
+                        "eta_poly", "min_SM", "M_rel_tip1", "unstable",
+                        "stall", "choke"])
             for sl in mp["speedlines"]:
                 for q in sl["points"]:
-                    w.writerow([sl["speed_frac"], sl["rpm"], q["mdot"],
+                    w.writerow([sl["speed_frac"], sl["rpm"],
+                                sl.get("vsv_deg", 0.0), q["mdot"],
                                 q["PR"], q["eta_poly"], q["min_SM"],
                                 q["M_rel_tip1"], int(q["unstable"]),
                                 int(q["stall"]), int(q["choke"])])
         print("  " + ui.ok(f"map        → {map_path}"))
-        print(ui.c("\n  Off-design map (L0 proxy):", "dim"))
+        print(ui.c(f"\n  Off-design map (L0 proxy, VSV {vsv_mode}):",
+                   "dim"))
         for sl in mp["speedlines"]:
             su, ch = sl["mdot_surge"], sl["mdot_choke"]
             rng_txt = (f"{su:.2f} – {ch:.2f} kg/s" if su is not None
                        else ui.c("no stable range", "warn"))
+            vsv_txt = (ui.c(f"  VSV {sl['vsv_deg']:.0f}°", "accent")
+                       if sl.get("vsv_deg") else "")
             print(f"    {ui.c('N=%.2f' % sl['speed_frac'], 'key')} "
-                  f"({sl['rpm']:,.0f} RPM): {rng_txt}")
+                  f"({sl['rpm']:,.0f} RPM): {rng_txt}{vsv_txt}")
 
     # ---- Final result ----
     feasible = rec.get("feasible")
