@@ -330,8 +330,8 @@ th_fast = THETA_REF.copy(); th_fast[1] *= 1.3
 st2 = sc.evaluate_structural(th_fast, pc._meanline(th_fast))
 check("esfuerzos crecen con RPM",
       st2["sigma_vm_max_MPa"] > st1["sigma_vm_max_MPa"])
-check("g_struct tiene 4 componentes finitas",
-      len(st1["g_struct"]) == 4
+check("g_struct tiene 5 componentes finitas (+ Campbell, fase 7)",
+      len(st1["g_struct"]) == sc.N_STRUCT_CONSTRAINTS == 5
       and all(np.isfinite(g) for g in st1["g_struct"]))
 
 # ==========================================================================
@@ -377,7 +377,7 @@ check("constraints: aero(8) + espec(4) sin material",
       len(g_all) == pc.N_CONSTRAINTS + 4, f"{len(g_all)}")
 spec_m = no.DesignSpec(PR_target=4.0, massflow=25.0)
 g_m = spec_m.constraints(rec, THETA_REF)
-check("constraints: + g_struct(4) con material",
+check("constraints: + g_struct(5) con material",
       len(g_m) == pc.N_CONSTRAINTS + 4 + sc.N_STRUCT_CONSTRAINTS)
 
 with tempfile.TemporaryDirectory() as td:
@@ -458,6 +458,52 @@ a_cli = phyac_cli.parse_args(["--pr", "4", "--fix", "phi1=0.6",
 check("CLI: --fix/--seed/--eval-theta parsean",
       a_cli.fix == ["phi1=0.6"] and a_cli.seed == 7
       and a_cli.eval_theta == "1,2,3")
+
+# ==========================================================================
+print("— T13 · dinámica de álabes (fase 7: Southwell, Campbell, K_t)")
+# f1 estática vs fórmula analítica de viga uniforme (misma sección rect)
+_stage0 = rec["stage_table"][0]
+_md = sc.blade_modes(_stage0, "Ti-6Al-4V", RPM=0.0, kind="rotor")
+_c = _stage0["chord_rotor_mm"] * 1e-3
+_t = 0.10 * _c                                # TC_ROOT_R
+_h = _stage0["h_blade_mm"] * 1e-3
+_E, _rho = sc.MATERIALS["Ti-6Al-4V"]["E"], sc.MATERIALS["Ti-6Al-4V"]["rho"]
+_f_exact = (sc.LAMBDA1_SQ / (2 * math.pi)) * math.sqrt(
+    _E * (_c * _t ** 3 / 12) / (_rho * _c * _t * _h ** 4))
+check("blade_modes: f1 estática = viga empotrada analítica (<2%)",
+      abs(_md["f1_static_Hz"] - _f_exact) / _f_exact < 0.02,
+      f"{_md['f1_static_Hz']:.1f} vs {_f_exact:.1f} Hz")
+_f_lo = sc.blade_modes(_stage0, "Ti-6Al-4V", 8000.0)["f1_Hz"]
+_f_hi = sc.blade_modes(_stage0, "Ti-6Al-4V", 16000.0)["f1_Hz"]
+check("blade_modes: f1 crece con RPM (Southwell) y > f1 estática",
+      _f_hi > _f_lo > _md["f1_static_Hz"])
+_s_short = dict(_stage0, h_blade_mm=0.5 * _stage0["h_blade_mm"])
+check("blade_modes: f1 cae con la altura de álabe (∝1/h²)",
+      sc.blade_modes(_s_short, "Ti-6Al-4V", 12500.0)["f1_static_Hz"]
+      > 3.0 * _md["f1_static_Hz"])
+_kts = [sc.k_t_root(r, 4.8) for r in (1.0, 2.0, 3.0, 4.0)]
+check("k_t_root: monótono decreciente con r_fillet y en banda [1.3, 2.5]",
+      all(_kts[i] > _kts[i + 1] for i in range(3))
+      and all(1.3 <= k <= 2.5 for k in _kts),
+      f"K_t={[round(k, 2) for k in _kts]}")
+_marg = [sc.evaluate_structural(THETA_REF, rec)["campbell_margin_min"]]
+_st_r = sc.evaluate_structural(THETA_REF, rec)
+check("evaluate_structural: Campbell/Goodman/flutter expuestos y finitos",
+      np.isfinite(_st_r["campbell_margin_min"])
+      and _st_r["sigma_alt_allow_MPa"] > 0
+      and len(_st_r["flutter"]) == 2 * len(rec["stage_table"])
+      and _st_r["k_t_root"] > 1.0)
+_prev_m = None
+_ok_cont = True
+for _rpm_f in np.linspace(0.9, 1.1, 9):
+    _th_c = THETA_REF.copy()
+    _th_c[1] *= _rpm_f
+    _m = sc.evaluate_structural(_th_c, pc._meanline(_th_c))[
+        "campbell_margin_min"]
+    if _prev_m is not None:
+        _ok_cont &= abs(_m - _prev_m) < 0.35
+    _prev_m = _m
+check("margen de Campbell continuo con RPM (sin saltos > 0.35)", _ok_cont)
 
 # ==========================================================================
 print(f"\n{_n_pass}/{_n_pass + _n_fail} checks OK"

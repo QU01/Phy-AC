@@ -300,11 +300,13 @@ def _stage_table_html(rec: dict) -> str:
 
 
 def _figures_section(theta: np.ndarray, rec: dict,
-                     figures_dir: str | None, log) -> str:
+                     figures_dir: str | None, log,
+                     material: str | None = None) -> str:
     try:
         import visualization
         figs = visualization.generate_figures(theta, rec,
-                                              outdir=figures_dir, log=log)
+                                              outdir=figures_dir, log=log,
+                                              material=material)
     except Exception as e:
         log(f"      ⚠ visualización omitida: {type(e).__name__}: {e}")
         figs = {}
@@ -332,7 +334,24 @@ def _structural_section(structural: dict | None, log) -> str:
     chip = (ok_chip % (OK, "MÁRGENES OK") if structural["feasible_struct"]
             else ok_chip % (BAD, "MARGEN VIOLADO"))
     labels = ["Fluencia a sobrevelocidad", "Margen de estallido",
-              "Límite AN²", "Raíz de álabe"]
+              "Límite AN²", "Raíz de álabe (K_t)", "Campbell (paso de álabes)"]
+    dyn_rows = ""
+    if "campbell" in structural:
+        f1s = " · ".join(f"{p['f1_Hz']:.0f}"
+                         for p in structural["campbell"]["per_row"])
+        dyn_rows = (
+            _row("f₁ flap por etapa (Southwell)", f"{f1s} Hz")
+            + _row("Margen de Campbell mín (paso de álabes)",
+                   f"{structural['campbell_margin_min']:.2f} "
+                   f"(≥ {structural['params']['campbell_band']:.2f})")
+            + _row("K_t raíz (Peterson, fillet "
+                   f"{structural['blade_fillet_r_mm']:.1f} mm)",
+                   f"{structural['k_t_root']:.2f}")
+            + _row("σ_alt admisible (Goodman, peor etapa)",
+                   f"{structural['sigma_alt_allow_MPa']:.0f} MPa")
+            + _row("Cribado de flutter (peor V*/1.4)",
+                   f"margen {structural['flutter_margin_min']:.2f} "
+                   "(métrica, no g)"))
     rows = "".join(
         _row("Material", structural["material"])
         + _row("σ_vm máx (disco, peor etapa)",
@@ -346,8 +365,9 @@ def _structural_section(structural: dict | None, log) -> str:
                f"(mín {structural['burst_margin_min']:.2f})")
         + _row("AN²", f"{structural['AN2_in2rpm2']:.2e} in²·rpm² "
                f"(máx {structural['AN2_max_m2_rpm2'] / 6.4516e-4:.2e})")
-        + _row("Raíz de álabe",
+        + _row("Raíz de álabe (con K_t)",
                f"{structural['blade_ratio']:.2f} de σ_y (≤ 1)")
+        + dyn_rows
         + _row("Masa del rotor (discos)",
                f"{structural['rotor_mass_kg']:.1f} kg"))
     g_rows = "".join(
@@ -424,8 +444,10 @@ def generate_report(spec, result: dict, path: str,
         f"<td>{h['surrogate'].get('coverage_2sigma', 0):.2f}</td></tr>"
         for h in hist)
 
-    figures_html = (_figures_section(theta, rec, figures_dir, log)
-                    if include_figures else "")
+    figures_html = (_figures_section(
+        theta, rec, figures_dir, log,
+        material=(structural or {}).get("material"))
+        if include_figures else "")
     structural_html = _structural_section(structural, log)
 
     cfx_html = ""

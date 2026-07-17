@@ -51,6 +51,8 @@ namespace AxialCompressorDesigner
                 && oAsm.ValueKind == JsonValueKind.Object)
             {
                 p.ShaftStubMm = fOpt(oAsm, "shaft_stub_mm", p.ShaftStubMm);
+                p.BladeFilletRMm = fOpt(oAsm, "blade_fillet_r_mm",
+                                        p.BladeFilletRMm);
                 p.ShaftBoreFrac = fOpt(oAsm, "shaft_bore_frac", p.ShaftBoreFrac);
                 p.HubWallMm = fOpt(oAsm, "hub_wall_mm", p.HubWallMm);
                 p.DiskWebFrac = fOpt(oAsm, "disk_web_frac", p.DiskWebFrac);

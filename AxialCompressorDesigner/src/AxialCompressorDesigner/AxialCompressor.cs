@@ -17,6 +17,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 using PicoGK;
 
 namespace AxialCompressorDesigner
@@ -50,6 +51,41 @@ namespace AxialCompressorDesigner
             return 0.5f * (fTe + fNextLe);
         }
 
+        /// <summary>Root fillets (phase 7): morphological closing
+        /// (`Fillet` = OverOffset) fills the concave blade-body junction
+        /// with radius BladeFilletRMm — the SAME value the Peterson K_t
+        /// in structures_core credits. Restricted to annular bands around
+        /// each row's root so LE/TE, tips and running gaps stay intact;
+        /// ONE Fillet pass per part (the expensive step), then masked and
+        /// unioned back.</summary>
+        Voxels voxWithRootFillets(Voxels vox,
+                                  List<(RowParams row, bool bAtHub)> aRows)
+        {
+            float fR = m_p.BladeFilletRMm;
+            if (fR <= 0f || aRows.Count == 0)
+                return vox;
+            float fBand = fR + 2f * m_p.VoxelSizeMm;
+            Voxels voxBands = null;
+            foreach ((RowParams row, bool bAtHub) in aRows)
+            {
+                float fZ0 = row.ZLeMm - fBand;
+                float fL = row.ZTeMm + fBand - fZ0;
+                float fRRoot = bAtHub
+                    ? RotorDrum.fRHubAt(m_p.HubLine, row.ZCenterMm)
+                    : Casing.fRTipAt(m_p.TipLine, row.ZCenterMm)
+                      + m_p.TipClearanceMm;
+                Voxels voxB = LatticeUtils.voxCylinderZ(
+                    new Vector3(0f, 0f, fZ0), fRRoot + fBand, fL);
+                voxB -= LatticeUtils.voxCylinderZ(
+                    new Vector3(0f, 0f, fZ0 - 1f),
+                    MathF.Max(fRRoot - fBand, 1f), fL + 2f);
+                voxBands = voxBands == null ? voxB : voxBands + voxB;
+            }
+            Voxels voxFil = new Voxels(vox);
+            voxFil.Fillet(fR);
+            return vox + (voxFil & voxBands);
+        }
+
         // ── rotating parts ────────────────────────────────────────────
         public Voxels voxShaft() => RotorDrum.voxShaft(m_p);
 
@@ -62,7 +98,10 @@ namespace AxialCompressorDesigner
             vox += RotorDrum.voxDiscWeb(m_p, m_aRotors[i]);
             vox += BladeRow.voxBuildRow(m_aRotors[i], m_p.TipClearanceMm,
                                         m_p.RootSinkMm, m_fMinThick);
-            return vox;
+            return voxWithRootFillets(vox, new List<(RowParams, bool)>
+            {
+                (m_aRotors[i], true),
+            });
         }
 
         // ── static parts ──────────────────────────────────────────────
@@ -87,15 +126,25 @@ namespace AxialCompressorDesigner
             }
             vox += BladeRow.voxBuildRow(m_aStators[i], m_p.TipClearanceMm,
                                         m_p.RootSinkMm, m_fMinThick);
+            var aFilletRows = new List<(RowParams, bool)>
+            {
+                (m_aStators[i], false),
+            };
             // guide vanes: the IGV hangs from the first ring, the OGV
             // from the last one (casing-mounted like any stator row)
             if (i == 0 && m_p.IgvRow != null)
+            {
                 vox += BladeRow.voxBuildRow(m_p.IgvRow, m_p.TipClearanceMm,
                                             m_p.RootSinkMm, m_fMinThick);
+                aFilletRows.Add((m_p.IgvRow, false));
+            }
             if (i == nStages - 1 && m_p.OgvRow != null)
+            {
                 vox += BladeRow.voxBuildRow(m_p.OgvRow, m_p.TipClearanceMm,
                                             m_p.RootSinkMm, m_fMinThick);
-            return vox;
+                aFilletRows.Add((m_p.OgvRow, false));
+            }
+            return voxWithRootFillets(vox, aFilletRows);
         }
 
         // ── lazy part builders: the caller builds ONE part at a time,

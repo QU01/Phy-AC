@@ -172,6 +172,35 @@ def _polygon_centroid(p: np.ndarray) -> np.ndarray:
     return np.array([cx, cy])
 
 
+def polygon_section_props(p: np.ndarray) -> dict:
+    """Propiedades de sección de un polígono cerrado (fórmulas de Green).
+
+    Función PURA y reutilizable (la consume structures_core.blade_modes):
+    área y segundos momentos respecto al CENTROIDE, en las unidades del
+    polígono al cuadrado/cuarta (mm²/mm⁴ para los `points` del contrato).
+    I_min/I_max son los momentos principales; I_p = Ix + Iy el polar.
+    El signo del área sigue la orientación (CCW > 0); los momentos se
+    devuelven con el |área| (invariantes a la orientación).
+    """
+    p = np.asarray(p, dtype=float)
+    c = _polygon_centroid(p)
+    x, y = p[:, 0] - c[0], p[:, 1] - c[1]
+    xr, yr = np.roll(x, -1), np.roll(y, -1)
+    a = x * yr - xr * y                       # doble área de cada triángulo
+    A = 0.5 * a.sum()
+    sA = 1.0 if A >= 0.0 else -1.0            # momentos positivos siempre
+    Ix = sA * ((y * y + y * yr + yr * yr) * a).sum() / 12.0
+    Iy = sA * ((x * x + x * xr + xr * xr) * a).sum() / 12.0
+    Ixy = sA * ((x * yr + 2.0 * x * y + 2.0 * xr * yr + xr * y)
+                * a).sum() / 24.0
+    I_mean = 0.5 * (Ix + Iy)
+    R = math.hypot(0.5 * (Ix - Iy), Ixy)
+    I_min, I_max = I_mean - R, I_mean + R
+    return dict(A_mm2=abs(A), I_min_mm4=max(I_min, 0.0),
+                I_max_mm4=max(I_max, 0.0), I_p_mm4=Ix + Iy,
+                centroid=c)
+
+
 def _row_sections(stage: dict, kind: str, omega: float,
                   n_span: int = N_SPAN) -> list[dict]:
     """Secciones de una fila con triángulos free-vortex y ángulos metálicos.
@@ -415,6 +444,8 @@ def build_contract(theta: np.ndarray, record: dict, structural: dict | None,
     # Parámetros del ensamble (capa 5c, estilo turbodesigner: eje +
     # discos por etapa + casco del hub + carcasa con bridas). El C# los
     # lee con defaults si faltan — el contrato es la única frontera.
+    import structures_core as _sc   # lazy: structures_core nos importa a
+    #                                 nosotros de forma diferida (fase 7)
     n_st = record["n_stages"]
     assembly = dict(
         shaft_stub_mm=30.0,        # muñón del eje a cada lado
@@ -424,6 +455,9 @@ def build_contract(theta: np.ndarray, record: dict, structural: dict | None,
         disk_web_min_mm=4.0, disk_web_max_mm=14.0,
         flange_bolt_count=12, flange_bolt_d_mm=6.0,
         flange_w_mm=12.0, flange_t_mm=8.0,
+        # fillet de raíz de álabe: el MISMO radio que usa el K_t de
+        # Peterson en structures_core (fase 7 — fuente única)
+        blade_fillet_r_mm=_sc.BLADE_FILLET_R_MM,
         # puerto de sangrado (boss radial con barreno en la carcasa)
         bleed_stage=max(n_st // 2, 1),   # etapa (1-based) del puerto
         bleed_hole_d_mm=18.0, bleed_boss_d_mm=32.0, bleed_boss_h_mm=14.0,

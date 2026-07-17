@@ -69,6 +69,9 @@ namespace AxialCompressorDesigner
         public float DrumInnerRadiusMm = 20f;   // shaft radius under the disks
         public float CasingWallMm = 5f;         // casing shell thickness
         public float RootSinkMm = 1.5f;         // blade root sink into body
+        public float BladeFilletRMm = 2f;       // root fillet radius (0 = off;
+                                                // same value structures_core
+                                                // uses for the Peterson K_t)
 
         // Assembly detail (turbodesigner-style; contract `assembly` block)
         public float ShaftStubMm = 30f;         // shaft stub past each end

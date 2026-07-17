@@ -176,7 +176,7 @@ Salidas de la fase C#: un STL por pieza más las vistas de unión
 | Módulo | Capa | Rol |
 |---|---|---|
 | `physics_core.py` | 1 | Núcleo físico multi-fidelidad: meanline L0 de stage-stacking (θ 13-D, correlaciones Lieblein/Howell/Koch, corrección de Reynolds por fila, $g(\theta)$ ×8, mapa fuera de diseño), spool axial L1 de turbo-design (TD3) con patches y timeout por solve, calibración afín L2, caché, features físicos. |
-| `structures_core.py` | 1s | Núcleo estructural L0s: biblioteca de materiales con derating térmico, solver de disco rotatorio 1-D por etapa (validado contra Timoshenko), márgenes de raíz de álabe, AN² y estallido. **Restricción dura del optimizador** vía `DesignSpec.material`. |
+| `structures_core.py` | 1s | Núcleo estructural L0s: biblioteca de materiales con derating térmico, solver de disco rotatorio 1-D por etapa (validado contra Timoshenko), márgenes de raíz de álabe (K_t de Peterson), AN², estallido y Campbell (paso de álabes), métricas Goodman + cribado de flutter. **Restricción dura del optimizador** vía `DesignSpec.material`. |
 | `neural_optimizer.py` | 2–4 | Deep ensemble con incertidumbre + quality gate, NSGA-II con dominancia restringida de Deb, adquisición LCB + k-means, orquestador `design(spec)` — portado de Phy-CC (núcleo agnóstico al dominio). |
 | `blade_profiles.py` | 5a | Secciones NACA-65 / DCA sobre comba de arco circular, incidencia de diseño Lieblein/Aungier, desviación de Carter, punto fijo de ángulos metálicos. |
 | `geometry_generator.py` | 5a | Secciones spanwise por free vortex (13 estaciones/fila), colocación axial exacta de filas, contrato `axial_compressor.json`, CSVs de annulus/etapas/BOM, BCs CFX, STEP opcional. |
@@ -186,7 +186,7 @@ Salidas de la fase C#: un STL por pieza más las vistas de unión
 | `AxialCompressorDesigner/` | 5c | Librería C# + PicoGK: importa `axial_compressor.json` (`PhyACImport`) y construye eje, discos-álabe y anillos de carcasa como STL imprimibles. |
 | `AxialCompressorDesigner.Example/` | 5c | Ejecutable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | producto | CLI end-to-end: espec → diseño → geometría → informe → dataset [→ STLs vía --stl/--voxel]. |
-| `test_phyac.py` | VV&UQ | Suite de verificación: 68 checks (triángulos, conservación, continuidad de g, perfiles, contrato, solver de disco, núcleo del optimizador, regresión de solapes). |
+| `test_phyac.py` | VV&UQ | Suite de verificación: 74 checks (triángulos, conservación, continuidad de g, perfiles, contrato, solver de disco, núcleo del optimizador, regresión de solapes). |
 | `validation/` | VV&UQ | Campaña de validación vs NASA Stage 35, Rotor 37/67 y GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## API Python (capas 1–5b)
@@ -288,7 +288,7 @@ Licencias de terceros: ver [README.md](README.md#third-party-licenses).
 ## Verificación y validación
 
 ```bash
-python test_phyac.py               # verificación: 68 checks
+python test_phyac.py               # verificación: 74 checks
 python validation/validate.py      # validación: máquinas NASA → RESULTS.md
 python data_pipeline.py            # anclas de datos: rebuild + SHA-256
 ```
@@ -336,6 +336,15 @@ predicción de pérdidas → (η, PR). Tabla vigente en
 
 ## Historia
 
+- **2026-07-17 — dinámica de álabes (fase 7)**: frecuencias propias de
+  viga rotante (Southwell), **margen de Campbell frente al paso de
+  álabes como 5º componente duro de g_struct**, K_t de Peterson del
+  filete en la restricción de raíz (el MISMO radio de 2 mm que la capa
+  5c ahora IMPRIME como fillet de raíz por closing morfológico
+  restringido), Goodman (σ_alt admisible) y cribado de flutter V* como
+  métricas reportadas, `figures/campbell.png` y bloque de dinámica en el
+  reporte. Factibilidad estructural medida intacta (65% → 65% en
+  LHS-500); anclas aero intactas.
 - **2026-07-17 — off-design físico**: bucket de incidencia dependiente
   del Mach (semiancho 10° → 3.5° entre M 0.2 y 0.8, Aungier 2003; rama
   de choke 1.5× más ancha), desviación progresiva fuera de diseño

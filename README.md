@@ -172,7 +172,7 @@ C# phase outputs: one STL per part plus the union views (binary, in mm).
 | Module | Layer | Role |
 |---|---|---|
 | `physics_core.py` | 1 | Multi-fidelity physical core: L0 stage-stacking meanline (13-D θ, Lieblein/Howell/Koch correlations, per-row Reynolds correction, $g(\theta)$ ×8, off-design map), L1 turbo-design (TD3) axial spool with patches and per-solve timeout, L2 affine calibration, caching, physics features. |
-| `structures_core.py` | 1s | Structural core L0s: materials library with thermal derating, per-stage 1-D rotating-disc solver (validated against Timoshenko), blade-root, AN² and burst margins. **Hard optimizer constraint** via `DesignSpec.material`. |
+| `structures_core.py` | 1s | Structural core L0s: materials library with thermal derating, per-stage 1-D rotating-disc solver (validated against Timoshenko), blade-root (Peterson K_t), AN², burst and Campbell (blade-passing) margins, Goodman + flutter screen metrics. **Hard optimizer constraint** via `DesignSpec.material`. |
 | `neural_optimizer.py` | 2–4 | Deep ensemble with uncertainty + quality gate, NSGA-II with Deb's constrained dominance, LCB acquisition + k-means, orchestrator `design(spec)` — ported from Phy-CC (domain-agnostic core). |
 | `blade_profiles.py` | 5a | NACA-65 / DCA sections on circular-arc camber, Lieblein/Aungier design incidence, Carter deviation, metal-angle fixed point. |
 | `geometry_generator.py` | 5a | Free-vortex spanwise sections (13 stations/row), exact axial row placement, `axial_compressor.json` contract, annulus/stage/BOM CSVs, CFX BCs, optional STEP. |
@@ -182,7 +182,7 @@ C# phase outputs: one STL per part plus the union views (binary, in mm).
 | `AxialCompressorDesigner/` | 5c | C# library + PicoGK: imports `axial_compressor.json` (`PhyACImport`) and builds shaft, bladed discs and casing rings as printable STLs. |
 | `AxialCompressorDesigner.Example/` | 5c | Executable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | product | End-to-end CLI: spec → design → geometry → report → dataset [→ STLs via --stl/--voxel]. |
-| `test_phyac.py` | VV&UQ | Verification suite: 68 checks (triangles, conservation, g continuity, profiles, contract, disc solver, optimizer core, overlap regression). |
+| `test_phyac.py` | VV&UQ | Verification suite: 74 checks (triangles, conservation, g continuity, profiles, contract, disc solver, optimizer core, overlap regression). |
 | `validation/` | VV&UQ | Validation campaign vs NASA Stage 35, Rotor 37/67 and GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## Python API (layers 1–5b)
@@ -281,7 +281,7 @@ Phy-AC/
 ├── report_generator.py                   layer 5b  self-contained HTML report
 ├── visualization.py                      layer 5b  matplotlib figures (optional)
 ├── phyac_cli.py                          end-to-end CLI (spec → design → report [→ STLs])
-├── test_phyac.py                         verification suite (68 checks)
+├── test_phyac.py                         verification suite (74 checks)
 │
 ├── validation/                           validation campaign (machines.py, validate.py)
 ├── data/                                 in-repo correlation anchors + manifest.json
@@ -366,7 +366,7 @@ independent voxel fields built in the same `Library.Go` session.
 ## Verification and Validation
 
 ```bash
-python test_phyac.py               # verification: 68 checks
+python test_phyac.py               # verification: 74 checks
 python validation/validate.py      # validation: NASA machines → RESULTS.md
 python data_pipeline.py            # data anchors: rebuild + SHA-256 verify
 ```
@@ -420,6 +420,14 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
 
 ## History
 
+- **2026-07-17 — blade dynamics (phase 7)**: rotating-cantilever natural
+  frequencies (Southwell), **Campbell margin vs blade-passing orders as
+  the 5th hard g_struct component**, Peterson fillet K_t on the root
+  constraint (same 2 mm radius layer 5c now PRINTS as a restricted
+  morphological-closing root fillet), Goodman allowable-vibratory-stress
+  and flutter V* screen as reported metrics, `figures/campbell.png` and
+  a blade-dynamics block in the report. Structural feasibility measured
+  intact (65% → 65% on LHS-500); aero anchors untouched.
 - **2026-07-17 — physical off-design**: Mach-dependent incidence bucket
   (half-width 10° → 3.5° between M 0.2 and 0.8, Aungier 2003;
   choke-side branch 1.5× wider), progressive off-design deviation

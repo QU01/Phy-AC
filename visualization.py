@@ -12,6 +12,8 @@ Figuras:
   stage_loading  ψ / DF / SM por etapa (barras)
   annulus        plano meridional hub/tip con cajas de filas
   sections       secciones del rotor 1 (hub/media/punta) staggered
+  campbell       f₁(N) por etapa vs engine orders (fase 7; requiere
+                 material — structures_core.blade_modes)
 """
 
 from __future__ import annotations
@@ -44,8 +46,12 @@ def _fig_to_b64(fig, outdir: str | None, name: str) -> str:
 
 
 def generate_figures(theta: np.ndarray, rec: dict,
-                     outdir: str | None = None, log=print) -> dict:
-    """Devuelve {nombre: {title, b64, caption}}. Nunca lanza por figura."""
+                     outdir: str | None = None, log=print,
+                     material: str | None = None) -> dict:
+    """Devuelve {nombre: {title, b64, caption}}. Nunca lanza por figura.
+
+    `material`: aleación del rotor (activa la figura de Campbell de la
+    fase 7; None = omitirla)."""
     try:
         plt = _mpl()
     except Exception:
@@ -162,6 +168,55 @@ def generate_figures(theta: np.ndarray, rec: dict,
                     "punta; DCA donde M_entrada > 0.8.")
     except Exception as e:
         log(f"      ⚠ figura sections: {type(e).__name__}: {e}")
+
+    # ---- diagrama de Campbell (fase 7) -------------------------------------
+    if material is not None:
+        try:
+            from structures_core import blade_modes, CAMPBELL_BAND
+            st = rec["stage_table"]
+            RPM_d = float(theta[1])
+            n_pts = 40
+            Ns = np.linspace(0.65 * RPM_d, 1.10 * RPM_d, n_pts)
+            fig, ax = plt.subplots(figsize=(7, 4.6))
+            eo_max_hz = 0.0
+            for s in st:
+                f1s = [blade_modes(s, material, N, kind="rotor")["f1_Hz"]
+                       for N in Ns]
+                ax.plot(Ns, f1s, lw=2,
+                        label=f"f₁ rotor {int(s['stage']) + 1}")
+                eo_bp = int(s["n_blades_stator"]) * RPM_d / 60.0
+                eo_max_hz = max(eo_max_hz, max(f1s))
+            # abanico de engine orders k=1..6 + paso de álabes (min y máx)
+            for k in range(1, 7):
+                ax.plot(Ns, k * Ns / 60.0, color="0.65", lw=0.8)
+                ax.annotate(f"{k}E", (Ns[-1], k * Ns[-1] / 60.0),
+                            fontsize=7, color="0.4")
+            n_bp = sorted({int(s["n_blades_stator"]) for s in st})
+            for nb in (n_bp[0], n_bp[-1]) if n_bp else ():
+                ax.plot(Ns, nb * Ns / 60.0, "m-", lw=1.0, alpha=0.7)
+                ax.annotate(f"{nb}E (paso)", (Ns[0], nb * Ns[0] / 60.0),
+                            fontsize=7, color="m")
+            ax.axvspan(RPM_d * (1 - CAMPBELL_BAND),
+                       RPM_d * (1 + CAMPBELL_BAND),
+                       color="r", alpha=0.08,
+                       label=f"±{CAMPBELL_BAND:.0%} N diseño")
+            ax.axvline(RPM_d, color="r", ls="--", lw=1)
+            ax.set_xlabel("N [rpm]")
+            ax.set_ylabel("f [Hz]")
+            ax.set_ylim(0, 1.4 * eo_max_hz)
+            ax.grid(alpha=0.3)
+            ax.legend(fontsize=8, loc="upper left")
+            figs["campbell"] = dict(
+                title="Diagrama de Campbell (flap 1º, Southwell)",
+                b64=_fig_to_b64(fig, outdir, "campbell"),
+                caption="f₁(N) por etapa de rotor con rigidización "
+                        "centrífuga vs engine orders k=1..6 (gris) y paso "
+                        "de álabes (magenta, líneas fuera de escala hacia "
+                        "arriba). El margen duro de g_struct es frente al "
+                        "paso de álabes de los estátores vecinos a N de "
+                        "diseño; los EO bajos son métrica reportada.")
+        except Exception as e:
+            log(f"      ⚠ figura campbell: {type(e).__name__}: {e}")
 
     return figs
 

@@ -333,8 +333,59 @@ annular-disc solution to <1%.
 2. Burst margin ≥ 1.22 (area-weighted mean tangential stress, API-617
    style practice).
 3. **AN² ≤ AN²_max(material)** — the industry disc-sizing metric.
-4. Blade-root centrifugal stress
-   $\sigma = k_{taper}\,\rho\,\omega^2\,(r_t^2 - r_h^2)/2 \le \sigma_y(T)$.
+4. Blade-root centrifugal stress **with the fillet K_t** (§5.5):
+   $K_t\,\sigma_{root} \le \sigma_y(T)$,
+   $\sigma_{root} = k_{taper}\,\rho\,\omega^2\,(r_t^2 - r_h^2)/2$.
+5. **Campbell margin** (§5.5): first-flap frequency at least ±10% away
+   from the blade-passing engine orders of both neighbouring vane rows
+   at design speed.
+
+### 5.5 Blade Dynamics (phase 7, 2026-07-17)
+
+* **Natural frequencies — rotating cantilever.** First flap mode of an
+  Euler-Bernoulli clamped-free beam with Southwell's centrifugal
+  stiffening (rotor rows only):
+
+  $$f_1^2 = f_{1,0}^2 + S\,(N/60)^2, \qquad
+    f_{1,0} = \frac{\lambda_1^2}{2\pi}\sqrt{\frac{E\,I_{min}}{\rho A h^4}},
+    \quad \lambda_1^2 = 3.516,\; S = 1.6$$
+
+  Section: the real hub polygon (`geometry_generator.
+  polygon_section_props`, Green's theorem — principal moments) when
+  available, else the rectangular equivalent with the layer-5a root t/c
+  (same source as the printed part). First torsion
+  $f_t = \tfrac{1}{4h}\sqrt{G J/(\rho I_p)}$ (thin-strip J) feeds the
+  flutter screen. Verified against the analytical uniform cantilever to
+  <2% in the suite.
+
+* **Campbell diagram.** Hard constraint (5th g_struct component):
+  relative margin $|f_1 - EO|/EO \ge 0.10$ against the blade-passing
+  orders of the upstream and downstream vane rows (for rotor 1 the
+  upstream row is the IGV) at design speed. Low engine orders k = 1..6
+  are reported as metrics only — enforcing them all would block the
+  space at preliminary level. Measured on LHS(500): structural
+  feasibility unchanged (65% → 65%) — f₁ (10²–10³ Hz) sits far below
+  blade passing (10³–10⁴ Hz) except for extreme geometries, which is
+  exactly what the constraint should catch. `figures/campbell.png` plots
+  f₁(N) per stage against the EO fans.
+
+* **Root K_t and Goodman.** The root constraint pays the Peterson
+  shoulder-fillet concentration factor (polynomial fit, Peterson via
+  Shigley tab. A-15) evaluated with the printed fillet radius
+  (`BLADE_FILLET_R_MM` = 2.0 — the SAME parameter layer 5c uses to
+  build the root fillet by restricted morphological closing, phase 7.5):
+  K_t ≈ 1.4–1.6 for the design space (sharp-corner 1+2√(t/r) ≈ 3–4 is
+  over-conservative once the fillet is printed). LHS(500): blade-ratio
+  p90 rose 0.55 → 0.93 with feasibility intact. **Goodman** is a
+  reported metric (not g): remaining allowable vibratory stress
+  $\sigma_{alt} = \sigma_e\,(1 - K_t\sigma_{root}/\sigma_{uts}(T))$
+  with handbook σ_e per alloy — the standard preliminary-design
+  deliverable when the excitation amplitude is unknown.
+
+* **Flutter screen.** Tip reduced velocity $V^* = W/(b\,\omega_t)$
+  against the classical bending-torsion threshold 1.4 (Armstrong &
+  Stevenson 1960). Reported with a warning flag only — the L0s torsion
+  model is too coarse to gate on.
 
 ---
 
@@ -556,6 +607,13 @@ the machinery is the same.
 - Suder, K. L. (1996). NASA TM-107310; AGARD AR-355 (Rotor 37 test case).
 - GE Aircraft Engines. *Energy Efficient Engine (E³) High-Pressure
   Compressor* reports, NASA CR series.
+- Southwell, R. V. (1921). *On the Free Transverse Vibrations of a
+  Uniform Circular Disc Clamped at its Centre; and on the Effects of
+  Rotation*. Proc. Roy. Soc. A 101 (Southwell coefficient).
+- Peterson, R. E. *Stress Concentration Factors*, 2nd ed. (shoulder
+  fillet fit via Shigley, *Mechanical Engineering Design*, tab. A-15).
+- Armstrong, E. K., & Stevenson, R. M. (1960). *Some Practical Aspects
+  of Compressor Blade Vibration*. J. Roy. Aero. Soc. 64.
 - Deb, K., et al. (2002). *A Fast and Elitist Multiobjective Genetic
   Algorithm: NSGA-II*. IEEE Trans. Evol. Comput. 6(2).
 - Lakshminarayanan, B., et al. (2017). *Simple and Scalable Predictive
