@@ -79,6 +79,9 @@ NDIM = len(DESIGN_VARS)
 
 GAMMA, CP, RGAS = 1.4, 1005.0, 287.0
 MU_AIR = 1.81e-5          # Pa·s
+RE_REF = 1.0e6            # Re de cuerda nominal de las correlaciones de
+#                           pérdida (Koch & Smith 1976: perfil liso a 10⁶)
+RE_LAM = 2.0e5            # frontera de separación laminar (Wassell 1968)
 
 # --- Parámetros del meanline (calibrables; ver docs/VALIDATION.md) --------
 TIP_CLEARANCE_RATIO = 0.015   # ε/h holgura de punta relativa (rotor)
@@ -264,6 +267,27 @@ def _normal_shock_p0_ratio(M: float) -> float:
     return t1 * t2
 
 
+def _re_correction(re_c: float | None) -> float:
+    """Multiplicador de pérdida viscosa por número de Reynolds de cuerda.
+
+    Las correlaciones de perfil/endwall son nominales a Re_c ≈ 10⁶ con
+    superficie lisa (Koch & Smith 1976). Por debajo la pérdida crece como
+    Re^-0.2 (capa límite turbulenta lisa; en máquina completa Wassell 1968
+    y Schäffler 1980 miden (1−η) ∝ Re^-n con n ≈ 0.1–0.2) y como Re^-0.5
+    bajo RE_LAM (separación laminar). Continua en ambas fronteras. SIN
+    crédito por encima de RE_REF (conservador: mantiene la calibración
+    NASA, cuyas máquinas corren a Re ≳ 10⁶). Se aplica a perfil y endwall
+    (pérdidas de fricción), no al choque ni a la holgura de punta.
+    """
+    if re_c is None or not (re_c > 0.0):
+        return 1.0
+    if re_c >= RE_REF:
+        return 1.0
+    if re_c >= RE_LAM:
+        return (RE_REF / re_c) ** 0.2
+    return (RE_REF / RE_LAM) ** 0.2 * (RE_LAM / re_c) ** 0.5
+
+
 def _lieblein_theta_c(deq: float) -> float:
     """Espesor de momento de estela θ/c vs difusión equivalente (Lieblein
     1959, fit clásico). Diverge al acercarse Deq→e^(1/0.95): se acota."""
@@ -282,25 +306,29 @@ def _shock_omega(M: float) -> float:
 
 def _row_losses(beta1: float, beta2: float, W1: float, W2: float,
                 sigma: float, h_over_c: float, M_tip: float,
-                M_mean: float) -> tuple[float, float, dict]:
+                M_mean: float, re_c: float | None = None
+                ) -> tuple[float, float, dict]:
     """Pérdidas de una fila en el marco relativo a la fila.
 
     beta1/beta2 en rad (ángulos de flujo entrada/salida respecto al eje,
     positivos), W1/W2 velocidades entrada/salida del marco de la fila,
     M_tip/M_mean Mach de entrada en punta y en la línea media (el choque
     se promedia entre ambos, práctica de Miller — el choque solo cubre el
-    span exterior). Devuelve (omega_bar_total, dh_loss [J/kg], desglose).
-    ω̄ está referida a la presión dinámica de ENTRADA de la fila.
+    span exterior), re_c Reynolds de cuerda de la fila (None = sin
+    corrección, equivale a Re ≥ 10⁶). Devuelve (omega_bar_total,
+    dh_loss [J/kg], desglose). ω̄ está referida a la presión dinámica de
+    ENTRADA de la fila.
     """
     cb1, cb2 = math.cos(beta1), math.cos(beta2)
     tb1, tb2 = math.tan(beta1), math.tan(beta2)
+    f_re = _re_correction(re_c)
     # Difusión equivalente de Lieblein (forma de circulación, diseño)
     deq = (cb2 / max(cb1, 1e-3)) * (
         1.12 + 0.61 * (cb1 ** 2 / max(sigma, 1e-3)) * abs(tb1 - tb2))
     theta_c = _lieblein_theta_c(deq)
     # ω̄ de perfil (Lieblein): 2·(θ/c)·(σ/cosβ2)·(cosβ1/cosβ2)²
-    om_profile = K_PROFILE * 2.0 * theta_c * (sigma / max(cb2, 1e-3)) * \
-        (cb1 / max(cb2, 1e-3)) ** 2
+    om_profile = K_PROFILE * f_re * 2.0 * theta_c * \
+        (sigma / max(cb2, 1e-3)) * (cb1 / max(cb2, 1e-3)) ** 2
     # Secundarias + annulus (Howell): CDs=0.018·CL², CDa=0.020·(s/h);
     # conversión arrastre→pérdida referida a la entrada:
     # ω̄ = CD·σ·cos²β1/cos³βm  (Dixon & Hall §3; Wm/W1 = cosβ1/cosβm)
@@ -309,15 +337,16 @@ def _row_losses(beta1: float, beta2: float, W1: float, W2: float,
     CL = 2.0 * (1.0 / max(sigma, 1e-3)) * cbm * abs(tb1 - tb2)
     cd_sec = 0.018 * CL ** 2
     cd_ann = 0.020 * (1.0 / max(sigma, 1e-3)) / max(h_over_c, 0.2)
-    om_endwall = K_ENDWALL * (cd_sec + cd_ann) * sigma * cb1 ** 2 / \
+    om_endwall = K_ENDWALL * f_re * (cd_sec + cd_ann) * sigma * cb1 ** 2 / \
         max(cbm, 1e-3) ** 3
-    # Choque: promedio punta/media (dos puntos del span, Miller-style)
+    # Choque: promedio punta/media (dos puntos del span, Miller-style);
+    # sin f_re — la pérdida de choque no es de fricción
     om_shock = K_SHOCK * 0.5 * (_shock_omega(M_tip) + _shock_omega(M_mean))
     om_total = om_profile + om_endwall + om_shock
     # ΔP0rel = ω̄·½ρW1² → pérdida de entalpía ≈ ΔP0rel/ρ = ω̄·½W1²
     dh = om_total * 0.5 * W1 ** 2
     detail = dict(profile=om_profile, endwall=om_endwall, shock=om_shock,
-                  deq=deq, CL=CL)
+                  deq=deq, CL=CL, f_re=f_re, re_c=re_c)
     return om_total, dh, detail
 
 
@@ -538,12 +567,16 @@ def _meanline(theta: np.ndarray, rpm: float | None = None,
         h_c_r = h_blade / max(c_rotor, 1e-4)
         h_c_s = h_blade / max(c_stator, 1e-4)
 
-        # Pérdidas por fila
+        # Pérdidas por fila. Re de cuerda con el estado de ENTRADA de la
+        # etapa (ρ1 también para el estátor: ρ sube fila a fila, así que
+        # subestima ligeramente su Re — lado conservador).
+        Re_r = rho1 * W1 * c_rotor / MU_AIR
+        Re_s = rho1 * C2 * c_stator / MU_AIR
         om_r, dh_r, det_r = _row_losses(b1, b2r, W1, W2, sigma_r, h_c_r,
-                                        M_rel_tip, M1_rel_mean)
+                                        M_rel_tip, M1_rel_mean, re_c=Re_r)
         M2_abs = C2 / a1_sound
         om_s, dh_s, det_s = _row_losses(a2r, a1r, C2, C1, sigma_s, h_c_s,
-                                        M2_abs, M2_abs)
+                                        M2_abs, M2_abs, re_c=Re_s)
         # Fuera de diseño: bucket parabólico de incidencia sobre el rotor
         inc_deg = 0.0
         if off_design:
@@ -603,7 +636,9 @@ def _meanline(theta: np.ndarray, rpm: float | None = None,
             incidence_deg=inc_deg, wdf=wdf,
             losses=dict(rotor=dh_r, stator=dh_s, clearance=dh_cl,
                         omega_rotor=om_r, omega_stator=om_s,
-                        deq_rotor=det_r["deq"], deq_stator=det_s["deq"]),
+                        deq_rotor=det_r["deq"], deq_stator=det_s["deq"],
+                        Re_rotor=Re_r, Re_stator=Re_s,
+                        f_re_rotor=det_r["f_re"], f_re_stator=det_s["f_re"]),
         ))
 
         dh_shaft_total += dh0
@@ -646,12 +681,13 @@ def _meanline(theta: np.ndarray, rpm: float | None = None,
     a_ogv = math.radians(s_last["alpha1_deg"])
     C_ogv_in = s_last["C1"]
     Cx_last = s_last["Cx"]
+    T_st, _, rho_st, _ = _static_from_mach(s_last["Mx"], T0, P0,
+                                           swirl_tan=math.tan(a_ogv))
+    Re_ogv = rho_st * C_ogv_in * s_last["chord_stator_mm"] / 1000.0 / MU_AIR
     om_ogv, _, _ = _row_losses(a_ogv, 0.0, C_ogv_in, Cx_last, sigma_s,
                                s_last["h_blade_mm"] /
                                max(s_last["chord_stator_mm"], 1e-3),
-                               0.5, 0.5)
-    T_st, _, rho_st, _ = _static_from_mach(s_last["Mx"], T0, P0,
-                                           swirl_tan=math.tan(a_ogv))
+                               0.5, 0.5, re_c=Re_ogv)
     P0 = max(P0 - om_ogv * 0.5 * rho_st * C_ogv_in ** 2, 0.5 * P0)
     length_m += (1.0 + ROW_GAP_FRACTION) * s_last["chord_stator_mm"] / 1000.0
     # estado de salida tras OGV (flujo axial)

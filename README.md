@@ -171,7 +171,7 @@ C# phase outputs: one STL per part plus the union views (binary, in mm).
 
 | Module | Layer | Role |
 |---|---|---|
-| `physics_core.py` | 1 | Multi-fidelity physical core: L0 stage-stacking meanline (13-D θ, Lieblein/Howell/Koch correlations, $g(\theta)$ ×8, off-design map), L1 turbo-design (TD3) axial spool with patches and per-solve timeout, L2 affine calibration, caching, physics features. |
+| `physics_core.py` | 1 | Multi-fidelity physical core: L0 stage-stacking meanline (13-D θ, Lieblein/Howell/Koch correlations, per-row Reynolds correction, $g(\theta)$ ×8, off-design map), L1 turbo-design (TD3) axial spool with patches and per-solve timeout, L2 affine calibration, caching, physics features. |
 | `structures_core.py` | 1s | Structural core L0s: materials library with thermal derating, per-stage 1-D rotating-disc solver (validated against Timoshenko), blade-root, AN² and burst margins. **Hard optimizer constraint** via `DesignSpec.material`. |
 | `neural_optimizer.py` | 2–4 | Deep ensemble with uncertainty + quality gate, NSGA-II with Deb's constrained dominance, LCB acquisition + k-means, orchestrator `design(spec)` — ported from Phy-CC (domain-agnostic core). |
 | `blade_profiles.py` | 5a | NACA-65 / DCA sections on circular-arc camber, Lieblein/Aungier design incidence, Carter deviation, metal-angle fixed point. |
@@ -182,7 +182,7 @@ C# phase outputs: one STL per part plus the union views (binary, in mm).
 | `AxialCompressorDesigner/` | 5c | C# library + PicoGK: imports `axial_compressor.json` (`PhyACImport`) and builds shaft, bladed discs and casing rings as printable STLs. |
 | `AxialCompressorDesigner.Example/` | 5c | Executable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | product | End-to-end CLI: spec → design → geometry → report → dataset [→ STLs via --stl/--voxel]. |
-| `test_phyac.py` | VV&UQ | Verification suite: 54 checks (triangles, conservation, g continuity, profiles, contract, disc solver, optimizer core, overlap regression). |
+| `test_phyac.py` | VV&UQ | Verification suite: 57 checks (triangles, conservation, g continuity, profiles, contract, disc solver, optimizer core, overlap regression). |
 | `validation/` | VV&UQ | Validation campaign vs NASA Stage 35, Rotor 37/67 and GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## Python API (layers 1–5b)
@@ -276,7 +276,7 @@ Phy-AC/
 ├── report_generator.py                   layer 5b  self-contained HTML report
 ├── visualization.py                      layer 5b  matplotlib figures (optional)
 ├── phyac_cli.py                          end-to-end CLI (spec → design → report [→ STLs])
-├── test_phyac.py                         verification suite (54 checks)
+├── test_phyac.py                         verification suite (57 checks)
 │
 ├── validation/                           validation campaign (machines.py, validate.py)
 ├── data/                                 in-repo correlation anchors + manifest.json
@@ -361,7 +361,7 @@ independent voxel fields built in the same `Library.Go` session.
 ## Verification and Validation
 
 ```bash
-python test_phyac.py               # verification: 54 checks
+python test_phyac.py               # verification: 57 checks
 python validation/validate.py      # validation: NASA machines → RESULTS.md
 python data_pipeline.py            # data anchors: rebuild + SHA-256 verify
 ```
@@ -414,6 +414,10 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
 
 ## History
 
+- **2026-07-16 — Reynolds correction**: per-row f_Re on the friction
+  losses (Koch & Smith 1976 nominal at Re_c = 10⁶, Wassell/Schäffler
+  exponent, laminar branch below 2×10⁵, no credit above 10⁶ — NASA
+  validation deltas unchanged, REF_AX4 anchor re-frozen).
 - **2026-07-16 — controllability**: engineer-in-the-loop CLI
   (`--fix`, `--seed`, `--eval-theta`, `--resume` warm start,
   `--list-pareto`/`--pareto-pick`); `.gitattributes` fixes the CRLF

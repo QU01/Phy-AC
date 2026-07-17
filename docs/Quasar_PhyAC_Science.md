@@ -134,6 +134,27 @@ rotor-exit station** (needed by the L1 passage, §3).
   $\varepsilon/h = 0.015$ — the classical 2–3% η per 1% clearance
   sensitivity.
 
+* **Reynolds correction (2026-07-16).** Profile and endwall losses (the
+  friction-driven terms — not shock, not clearance) are multiplied by
+
+  $$f_{Re} = \begin{cases}
+    1 & Re_c \ge 10^6\\
+    (10^6/Re_c)^{0.2} & 2\times10^5 \le Re_c < 10^6\\
+    5^{0.2}\,(2\times10^5/Re_c)^{0.5} & Re_c < 2\times10^5
+  \end{cases}$$
+
+  with $Re_c = \rho_1 W_1 c/\mu$ per row (stage-inlet density for both
+  rows — slightly conservative for the stator). Nominal point and the
+  turbulent exponent follow Koch & Smith (1976); the machine-level
+  sensitivity $(1-\eta) \propto Re^{-n}$, $n \approx 0.1$–$0.2$, is the
+  Wassell (1968) / Schäffler (1980) band; the laminar branch below
+  $Re \approx 2\times10^5$ reflects laminar-separation loss growth. **No
+  credit above $10^6$** — deliberately conservative so the NASA
+  calibration (machines at $Re_c \gtrsim 10^6$) is preserved; the
+  correction activates for the small machines in the design space
+  (measured: −4.8 pts η at ṁ = 2.5 kg/s vs 25 kg/s at equal θ). The
+  REF_AX4 regression anchor was re-frozen citing this change.
+
 Stage efficiency $\eta_{tt} = 1 - \sum \Delta h_{loss}/\Delta h_0$; stage
 PR from the local polytropic relation; machine
 $\eta_{poly} = \frac{\gamma-1}{\gamma}\,\ln PR / \ln\tau$. The OGV
@@ -434,6 +455,11 @@ the machinery is the same.
   Compressor Stages*. ASME J. Eng. Power 103.
 - Koch, C. C., & Smith, L. H. (1976). *Loss Sources and Magnitudes in
   Axial-Flow Compressors*. ASME J. Eng. Power 98.
+- Wassell, A. B. (1968). *Reynolds Number Effects in Axial Compressors*.
+  ASME J. Eng. Power 90(2).
+- Schäffler, A. (1980). *Experimental and Analytical Investigation of the
+  Effects of Reynolds Number and Blade Surface Roughness on Multistage
+  Axial Flow Compressors*. ASME J. Eng. Power 102 (79-GT-2).
 - Carter, A. D. S. (1950). *The Low Speed Performance of Related
   Aerofoils in Cascade*. ARC CP-29.
 - Aungier, R. H. (2003). *Axial-Flow Compressors: A Strategy for

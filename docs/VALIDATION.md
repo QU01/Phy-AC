@@ -38,6 +38,13 @@ Tabla viva en `validation/RESULTS.md` (regenerar tras tocar
 - Conversión arrastre→pérdida del endwall: ω̄ = C_D·σ·cos²β₁/cos³β_m
   (Dixon §3). El bug inicial (factor invertido) dominaba el error de η
   (−17 pts) — corregido y cubierto por las anclas de regresión.
+- **Corrección de Reynolds (2026-07-16)**: f_Re multiplica perfil y
+  endwall (Koch & Smith 1976 nominal a Re_c=10⁶; Re^−0.2 turbulento,
+  Re^−0.5 bajo 2×10⁵ — Wassell 1968 / Schäffler 1980). SIN crédito por
+  encima de 10⁶: las máquinas NASA de esta tabla corren a Re_c ≳ 10⁶ y
+  sus deltas no se movieron (Stage 35 +0.89→+0.87% PR; resto idéntico).
+  El ancla REF_AX4 sí se movió (filas traseras con Re < 10⁶:
+  η 0.8900→0.8837) y se re-congeló citando esta corrección.
 
 ## 4. Anclas de regresión
 

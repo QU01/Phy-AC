@@ -175,7 +175,7 @@ Salidas de la fase C#: un STL por pieza más las vistas de unión
 
 | Módulo | Capa | Rol |
 |---|---|---|
-| `physics_core.py` | 1 | Núcleo físico multi-fidelidad: meanline L0 de stage-stacking (θ 13-D, correlaciones Lieblein/Howell/Koch, $g(\theta)$ ×8, mapa fuera de diseño), spool axial L1 de turbo-design (TD3) con patches y timeout por solve, calibración afín L2, caché, features físicos. |
+| `physics_core.py` | 1 | Núcleo físico multi-fidelidad: meanline L0 de stage-stacking (θ 13-D, correlaciones Lieblein/Howell/Koch, corrección de Reynolds por fila, $g(\theta)$ ×8, mapa fuera de diseño), spool axial L1 de turbo-design (TD3) con patches y timeout por solve, calibración afín L2, caché, features físicos. |
 | `structures_core.py` | 1s | Núcleo estructural L0s: biblioteca de materiales con derating térmico, solver de disco rotatorio 1-D por etapa (validado contra Timoshenko), márgenes de raíz de álabe, AN² y estallido. **Restricción dura del optimizador** vía `DesignSpec.material`. |
 | `neural_optimizer.py` | 2–4 | Deep ensemble con incertidumbre + quality gate, NSGA-II con dominancia restringida de Deb, adquisición LCB + k-means, orquestador `design(spec)` — portado de Phy-CC (núcleo agnóstico al dominio). |
 | `blade_profiles.py` | 5a | Secciones NACA-65 / DCA sobre comba de arco circular, incidencia de diseño Lieblein/Aungier, desviación de Carter, punto fijo de ángulos metálicos. |
@@ -186,7 +186,7 @@ Salidas de la fase C#: un STL por pieza más las vistas de unión
 | `AxialCompressorDesigner/` | 5c | Librería C# + PicoGK: importa `axial_compressor.json` (`PhyACImport`) y construye eje, discos-álabe y anillos de carcasa como STL imprimibles. |
 | `AxialCompressorDesigner.Example/` | 5c | Ejecutable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | producto | CLI end-to-end: espec → diseño → geometría → informe → dataset [→ STLs vía --stl/--voxel]. |
-| `test_phyac.py` | VV&UQ | Suite de verificación: 54 checks (triángulos, conservación, continuidad de g, perfiles, contrato, solver de disco, núcleo del optimizador, regresión de solapes). |
+| `test_phyac.py` | VV&UQ | Suite de verificación: 57 checks (triángulos, conservación, continuidad de g, perfiles, contrato, solver de disco, núcleo del optimizador, regresión de solapes). |
 | `validation/` | VV&UQ | Campaña de validación vs NASA Stage 35, Rotor 37/67 y GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## API Python (capas 1–5b)
@@ -283,7 +283,7 @@ Licencias de terceros: ver [README.md](README.md#third-party-licenses).
 ## Verificación y validación
 
 ```bash
-python test_phyac.py               # verificación: 54 checks
+python test_phyac.py               # verificación: 57 checks
 python validation/validate.py      # validación: máquinas NASA → RESULTS.md
 python data_pipeline.py            # anclas de datos: rebuild + SHA-256
 ```
@@ -330,6 +330,10 @@ predicción de pérdidas → (η, PR). Tabla vigente en
 
 ## Historia
 
+- **2026-07-16 — corrección de Reynolds**: f_Re por fila en las pérdidas
+  de fricción (nominal Koch & Smith 1976 a Re_c = 10⁶, exponente
+  Wassell/Schäffler, rama laminar bajo 2×10⁵, sin crédito sobre 10⁶ —
+  deltas de validación NASA sin cambio, ancla REF_AX4 re-congelada).
 - **2026-07-16 — controlabilidad**: CLI con el ingeniero en el lazo
   (`--fix`, `--seed`, `--eval-theta`, warm start `--resume`,
   `--list-pareto`/`--pareto-pick`); `.gitattributes` corrige el fallo

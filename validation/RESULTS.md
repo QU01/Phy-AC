@@ -1,6 +1,6 @@
 # Resultados de validación — Quasar Phy-AC
 
-Generado por `validation/validate.py` el 2026-07-11 (meanline L0, sin calibración afín). **Regenerar tras cualquier cambio en `physics_core.py`** — este archivo se versiona como evidencia.
+Generado por `validation/validate.py` el 2026-07-16 (meanline L0, sin calibración afín). **Regenerar tras cualquier cambio en `physics_core.py`** — este archivo se versiona como evidencia.
 
 Metodología: el θ de cada máquina reproduce su annulus (r_tip vía φ1) y su TRABAJO medido (ψ desde ΔT0 publicado); se califica la predicción de pérdidas → (η, PR). Tolerancias por máquina en `machines.py` (monoetapa 5%/2 pts; transónicos y multietapa relajados — ver notas).
 
@@ -8,7 +8,7 @@ Metodología: el θ de cada máquina reproduce su annulus (r_tip vía φ1) y su 
 
 | Máquina | Plano | PR modelo | PR medido | ΔPR | η modelo | η medida | Δη [pts] | PR | η |
 |---|---|---|---|---|---|---|---|---|---|
-| NASA Stage 35 | etapa completa (t-t) | 1.836 | 1.820 | +0.89% | 0.841 (eta_isen) | 0.828 | +1.3 | PASS | PASS |
+| NASA Stage 35 | etapa completa (t-t) | 1.836 | 1.820 | +0.87% | 0.841 (eta_isen) | 0.828 | +1.3 | PASS | PASS |
 | NASA Rotor 37 | rotor aislado (t-t) | 2.069 | 2.106 | -1.76% | 0.854 (eta_isen) | 0.877 | -2.3 | PASS | PASS |
 | NASA Rotor 67 | rotor aislado (t-t) | 1.610 | 1.630 | -1.22% | 0.905 (eta_isen) | 0.930 | -2.5 | PASS | PASS |
 | GE/NASA E3 HPC (10 etapas) | máquina multietapa (t-t) | 22.000 | 23.000 | -4.35% | 0.887 (eta_poly) | 0.900 | -1.3 | PASS | PASS |
@@ -43,7 +43,7 @@ Notas: Multietapa con estátores variables y φ/Rx variables por etapa que la pa
 
 | Ancla | Estado | Detalle |
 |---|---|---|
-| REF_AX4 (4 etapas, θ de referencia del módulo) | PASS | PR=2.7247 (esp. 2.7248); eta_poly=0.8900 (esp. 0.8900); eta_isen=0.8736 (esp. 0.8736); T0_out=397.5317 (esp. 397.5317); U_tip=361.7974 (esp. 361.7974) |
+| REF_AX4 (4 etapas, θ de referencia del módulo) | PASS | PR=2.7056 (esp. 2.7056); eta_poly=0.8837 (esp. 0.8837); eta_isen=0.8665 (esp. 0.8665); T0_out=397.5317 (esp. 397.5317); U_tip=361.7974 (esp. 361.7974) |
 
 ## Cómo añadir una máquina
 

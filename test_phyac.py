@@ -104,6 +104,26 @@ check("altura de álabe decrece hacia atrás",
 check("Mach axial subsónico en todas las estaciones",
       all(s["Mx"] < 1.0 for s in rec["stage_table"]))
 
+# corrección de Reynolds: f_Re continua, monótona y activa en máquinas
+# pequeñas (Koch & Smith 1976 / Wassell 1968 / Schäffler 1980)
+f_hi = pc._re_correction(pc.RE_REF)
+f_mid_a = pc._re_correction(pc.RE_LAM * 1.0001)
+f_mid_b = pc._re_correction(pc.RE_LAM * 0.9999)
+check("f_Re: continua en RE_LAM/RE_REF y sin crédito sobre RE_REF",
+      abs(f_hi - 1.0) < 1e-12 and abs(f_mid_a - f_mid_b) < 1e-3
+      and pc._re_correction(2 * pc.RE_REF) == 1.0)
+check("f_Re: monótona decreciente con Re",
+      pc._re_correction(5e4) > pc._re_correction(3e5)
+      > pc._re_correction(9e5) > 1.0 - 1e-12)
+th_small = THETA_REF.copy()
+th_small[12] = 2.5                  # máquina 10× más pequeña ⇒ Re_c ↓
+rec_small = pc._meanline(th_small)
+check("máquina pequeña (Re↓) ⇒ η↓ (corrección de Reynolds activa)",
+      rec_small["eta_poly"] < rec["eta_poly"] - 0.002
+      and any(s["losses"]["f_re_rotor"] > 1.0
+              for s in rec_small["stage_table"]),
+      f"η {rec_small['eta_poly']:.4f} vs {rec['eta_poly']:.4f}")
+
 # ==========================================================================
 print("— T4 · robustez del vector g (dominancia de Deb)")
 rng = np.random.default_rng(42)
