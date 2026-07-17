@@ -11,7 +11,7 @@ Metodología: el θ de cada máquina reproduce su annulus (r_tip vía φ1) y su 
 | NASA Stage 35 | etapa completa (t-t) | 1.834 | 1.820 | +0.79% | 0.840 (eta_isen) | 0.828 | +1.2 | PASS | PASS |
 | NASA Rotor 37 | rotor aislado (t-t) | 2.082 | 2.106 | -1.12% | 0.862 (eta_isen) | 0.877 | -1.5 | PASS | PASS |
 | NASA Rotor 67 | rotor aislado (t-t) | 1.619 | 1.630 | -0.68% | 0.916 (eta_isen) | 0.930 | -1.4 | PASS | PASS |
-| GE/NASA E3 HPC (10 etapas) | máquina multietapa (t-t) | 21.722 | 23.000 | -5.55% | 0.884 (eta_poly) | 0.900 | -1.6 | PASS | PASS |
+| GE/NASA E3 HPC (10 etapas) | máquina multietapa (t-t) | 21.895 | 23.000 | -4.80% | 0.886 (eta_poly) | 0.900 | -1.4 | PASS | PASS |
 
 ### Detalle por máquina
 
@@ -35,9 +35,9 @@ Notas: Rotor de fan transónico de baja HTR (0.375, FUERA de los bounds del opti
 
 **GE/NASA E3 HPC (10 etapas)** — fuente: GE Aircraft Engines, NASA CR-168919 / programa Energy Efficient Engine: HPC de 10 etapas, PR 23, ~54.4 kg/s corregidos, velocidad de punta corregida ~456 m/s, radio de cubo/punta de entrada ~0.5. ENTRADA APROXIMADA: verificar contra el CR antes de endurecer tolerancias.
 
-θ construido: n=10, RPM=12300, HTR=0.500, φ1=0.529, ψ=0.422, Rx=0.60, σr=1.30, σs=1.20, AR=1.50
+θ construido: n=10, RPM=12300, HTR=0.500, φ1=0.491, ψ=0.422, Rx=0.60, σr=1.30, σs=1.20, AR=1.50
 
-Notas: Multietapa con estátores variables y φ/Rx variables por etapa que la parametrización de etapa repetida (ψ_mid + ψ_slope) solo aproxima — por eso la tolerancia relajada (plan §validación). Ancla la acumulación de bloqueo y el work-done factor.
+Notas: Multietapa con estátores variables y φ/Rx variables por etapa; desde la fase 8 la distribución se aproxima con pendientes lineales (campo `slopes`, fit de 2 parámetros APROXIMADO — ver comentario). Ancla la acumulación de bloqueo y el work-done factor.
 
 ## Anclas de regresión internas (no son mediciones)
 

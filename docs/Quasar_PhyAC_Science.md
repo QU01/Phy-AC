@@ -31,21 +31,37 @@ implemented in the code, with references. It is the axial counterpart of
 
 ### 1.1 Design Space and Variables
 
-The design vector is **13-dimensional**, using scalar distributions
-instead of per-stage free parameters (`physics_core.DESIGN_VARS`):
+The design vector is **15-dimensional** (13 legacy + the phase-8 per-stage
+slopes; `physics_core.DESIGN_VARS`):
 
 | # | Variable | Range | Meaning |
 |---|---|---|---|
 | 0 | `n_stages` | 1–8 | stage count (rounded to integer inside `evaluate`) |
 | 1 | `RPM` | 5k–25k | shaft speed |
 | 2 | `HTR_in` | 0.40–0.80 | inlet hub-to-tip radius ratio |
-| 3 | `phi1` | 0.35–0.80 | flow coefficient φ = Cx/U_m |
+| 3 | `phi1` | 0.35–0.80 | mean flow coefficient φ = Cx/U_m |
 | 4 | `psi_mid` | 0.22–0.45 | mean stage loading ψ = Δh₀/U_m² |
 | 5 | `psi_slope` | −0.30–0.30 | linear front→rear tilt of ψ |
 | 6 | `Rx_mean` | 0.50–0.85 | mean-line degree of reaction |
 | 7–8 | `sigma_r`, `sigma_s` | 0.9–1.6 / 0.8–1.5 | rotor / stator solidity |
 | 9 | `AR` | 1.2–3.5 | rotor aspect ratio h/c (stator = 1.1·AR) |
 | 10–12 | `T0_in`, `P0_in`, `massflow` | — | pinned by the spec (`fix_operating_point`) |
+| 13 | `phi_slope` | −0.25–0.25 | linear front→rear tilt of φ (phase 8) |
+| 14 | `Rx_slope` | −0.20–0.20 | linear front→rear tilt of Rx (phase 8) |
+
+**Per-stage distributions (phase 8).** φ_i = φ1·(1+s_φ·ξ_i),
+Rx_i = Rx·(1+s_Rx·ξ_i), ξ_i = 2i/(N−1)−1 — the same scheme ψ always used.
+The slopes were appended **at the end** of θ so the operating-point
+indices 10–12 never move: legacy 13-D vectors (old checkpoints, anchors,
+`--eval-theta` inputs) are padded by `pad_theta` with zero slopes, which
+reproduces the pre-phase-8 physics **bit-exactly** (verified by a 1e-12
+check and by the untouched regression anchors). For arbitrary per-stage
+distributions there is the expert-mode `per_stage` override
+({"phi"/"psi"/"Rx": [...]}, `--eval-theta --per-stage file.json`,
+meanline-only) — it is deliberately NOT part of the search space (a
+free 24-D+ per-stage vector is intractable for the 150–500-evaluation
+budget; the linear slopes capture the first-order pattern of real
+machines: φ falls rearward, Rx rises).
 
 **The inlet tip radius is NOT a design variable.** Given (φ₁, HTR, RPM,
 ṁ), continuity determines the inlet annulus uniquely; `_meanline` solves
@@ -431,10 +447,12 @@ domain-agnostic. What Phy-AC provides is the domain adapter:
 * `DesignSpec(PR_target, massflow, RPM_max, U_tip_max, r_tip_max_mm,
   n_stages_max, power_max_W, material, fixed_vars)`; `n_stages` gets the
   same continuous-variable/integer-physics treatment as `N_blades` in
-  Phy-CC. `fixed_vars` pins any of the 10 design variables (e.g.
-  `{"n_stages": 5, "phi1": 0.60}`): every evaluation path goes through
+  Phy-CC. `fixed_vars` pins any of the 12 design variables (the 10
+  legacy ones plus `phi_slope`/`Rx_slope`, e.g. `{"n_stages": 5,
+  "phi_slope": 0.0}`): every evaluation path goes through
   `fix_operating_point`, so the pinned dimension collapses for LHS,
-  NSGA-II and acquisition alike.
+  NSGA-II and acquisition alike (pinning both slopes to 0 reproduces
+  the pre-phase-8 13-D space exactly).
 * **Controllability** (CLI): `--seed` (default 71), `--fix VAR=VALUE`,
   `--eval-theta` (direct evaluation of a given design, no optimization),
   `--resume` (warm start from a checkpoint — the saved dataset replaces

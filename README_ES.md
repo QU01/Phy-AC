@@ -121,6 +121,8 @@ python phyac_cli.py --pr 4 --mdot 25 --fix n_stages=5 --fix phi1=0.60 --seed 42
 #  Rx,sigma_r,sigma_s,AR — el punto de operación sale de los flags):
 python phyac_cli.py --eval-theta "4,12500,0.62,0.55,0.32,-0.10,0.60,1.20,1.10,2.20" \
     --pr 4 --mdot 25 --outdir runs/eval --map    # --map-vsv: schedule VSV auto
+#   (12 valores = esos 10 + phi_slope,Rx_slope; 13/15 = θ completo.
+#    Modo experto: --per-stage dist.json sobreescribe phi/psi/Rx por etapa)
 
 # Reanudar una corrida desde su checkpoint (el dataset sustituye al LHS):
 python phyac_cli.py --outdir runs/pr4 --resume --rounds 3
@@ -186,7 +188,7 @@ Salidas de la fase C#: un STL por pieza más las vistas de unión
 | `AxialCompressorDesigner/` | 5c | Librería C# + PicoGK: importa `axial_compressor.json` (`PhyACImport`) y construye eje, discos-álabe y anillos de carcasa como STL imprimibles. |
 | `AxialCompressorDesigner.Example/` | 5c | Ejecutable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | producto | CLI end-to-end: espec → diseño → geometría → informe → dataset [→ STLs vía --stl/--voxel]. |
-| `test_phyac.py` | VV&UQ | Suite de verificación: 74 checks (triángulos, conservación, continuidad de g, perfiles, contrato, solver de disco, núcleo del optimizador, regresión de solapes). |
+| `test_phyac.py` | VV&UQ | Suite de verificación: 79 checks (triángulos, conservación, continuidad de g, perfiles, contrato, solver de disco, núcleo del optimizador, regresión de solapes). |
 | `validation/` | VV&UQ | Campaña de validación vs NASA Stage 35, Rotor 37/67 y GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## API Python (capas 1–5b)
@@ -288,7 +290,7 @@ Licencias de terceros: ver [README.md](README.md#third-party-licenses).
 ## Verificación y validación
 
 ```bash
-python test_phyac.py               # verificación: 74 checks
+python test_phyac.py               # verificación: 79 checks
 python validation/validate.py      # validación: máquinas NASA → RESULTS.md
 python data_pipeline.py            # anclas de datos: rebuild + SHA-256
 ```
@@ -308,16 +310,20 @@ predicción de pérdidas → (η, PR). Tabla vigente en
 
 | Máquina | ΔPR | Δη |
 |---|---|---|
-| NASA Stage 35 (etapa transónica) | +0.9% | +1.3 pts |
-| NASA Rotor 37 (rotor transónico) | −1.8% | −2.3 pts |
-| NASA Rotor 67 (fan transónico) | −1.2% | −2.5 pts |
-| GE/NASA E³ HPC (10 etapas) | −4.4% | −1.3 pts |
+| NASA Stage 35 (etapa transónica) | +0.8% | +1.2 pts |
+| NASA Rotor 37 (rotor transónico) | −1.1% | −1.5 pts |
+| NASA Rotor 67 (fan transónico) | −0.7% | −1.4 pts |
+| GE/NASA E³ HPC (10 etapas) | −4.8% | −1.4 pts |
 
 ## Estado actual y límites declarados (v0.1)
 
-- **Parametrización de etapa repetitiva** (ψ_mid + ψ_slope, Rx/φ únicos):
-  las máquinas reales varían φ/Rx por etapa — la tolerancia del E³ está
-  relajada por esto; es el primer candidato a un θ más rico.
+- **Parametrización por etapa** (fase 8): el θ 15-D lleva pendientes
+  lineales frontal→trasero de φ y Rx (además de la de ψ de siempre) —
+  el patrón de primer orden de las máquinas reales; la tolerancia del
+  E³ se endureció 8%→6% con sus pendientes declaradas. Las
+  distribuciones arbitrarias por etapa son el override experto
+  `per_stage` (`--eval-theta --per-stage archivo.json`, solo meanline),
+  deliberadamente fuera del espacio de búsqueda.
 - **Modelo de choque L0**: promedio de choque normal en dos puntos con
   K_SHOCK = 0.70 calibrado en Rotor 37/67; sobre M_punta ≈ 1.5 es
   extrapolación.
@@ -336,6 +342,13 @@ predicción de pérdidas → (η, PR). Tabla vigente en
 
 ## Historia
 
+- **2026-07-17 — θ por etapa (fase 8)**: vector de diseño 15-D con
+  pendientes lineales de φ/Rx añadidas AL FINAL (los índices del punto
+  de operación no se mueven); los θ legacy de 13, checkpoints y anclas
+  se paddean con pendientes 0 **bit-exacto** (anclas SIN re-congelar);
+  override experto `per_stage` + `--per-stage`; la validación E³
+  declara sus pendientes (φ cae, Rx sube hacia atrás) y su tolerancia
+  de PR se endurece 8%→6% (−5.55%→−4.80%).
 - **2026-07-17 — dinámica de álabes (fase 7)**: frecuencias propias de
   viga rotante (Southwell), **margen de Campbell frente al paso de
   álabes como 5º componente duro de g_struct**, K_t de Peterson del

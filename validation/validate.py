@@ -59,19 +59,27 @@ def measured_dT0(spec: dict, measured: dict) -> float:
     return T0 * (PR ** ((GAMMA - 1) / (GAMMA * measured["eta_poly"])) - 1.0)
 
 
-def build_theta(spec: dict, measured: dict) -> np.ndarray:
-    """Construye θ que reproduce annulus (r_tip vía φ1) y trabajo (ψ_mid)."""
+def build_theta(spec: dict, measured: dict,
+                slopes: dict | None = None) -> np.ndarray:
+    """Construye θ que reproduce annulus (r_tip vía φ1) y trabajo (ψ_mid).
+
+    `slopes` (fase 8, multietapa): {"phi_slope", "Rx_slope"} describe la
+    distribución POR ETAPA de la máquina (θ 15-D); la bisección de φ1
+    sigue anclando la etapa frontal al annulus publicado. Sin slopes el θ
+    es el legacy de 13 (pad_theta pone pendientes 0)."""
     omega = spec["RPM"] * 2 * math.pi / 60.0
     r_tip_target = spec["U_tip"] / omega
     r_mean = 0.5 * (1.0 + spec["HTR"]) * r_tip_target
     Um = omega * r_mean
     psi = CP * measured_dT0(spec, measured) / (spec["n_stages"] * Um ** 2)
+    tail = ([slopes.get("phi_slope", 0.0), slopes.get("Rx_slope", 0.0)]
+            if slopes else [])
 
     def theta_of(phi1: float) -> np.ndarray:
         return np.array([spec["n_stages"], spec["RPM"], spec["HTR"], phi1,
                          psi, 0.0, spec["Rx_est"], spec["sigma_r"],
                          spec["sigma_s"], spec["AR"], spec["T0"],
-                         spec["P0"], spec["mdot"]])
+                         spec["P0"], spec["mdot"]] + tail)
 
     lo, hi = 0.25, 1.10
     for _ in range(60):
@@ -117,7 +125,7 @@ def run_machine(m: dict) -> dict:
     if "eps_tip_mm" in m:
         _pc.TIP_CLEARANCE_MM = float(m["eps_tip_mm"])
     try:
-        theta = build_theta(m["spec"], m["measured"])
+        theta = build_theta(m["spec"], m["measured"], m.get("slopes"))
         rec = evaluate(theta, fidelity=Fidelity.L0, use_cache=False,
                        calibrate=False)
     finally:

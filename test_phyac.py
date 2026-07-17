@@ -54,7 +54,10 @@ u = np.random.default_rng(0).random(pc.NDIM)
 check("normalize∘denormalize = identidad",
       np.allclose(pc.normalize(pc.denormalize(u)), u, atol=1e-12))
 check("bounds coherentes (lo < hi)", np.all(pc.BOUNDS_LO < pc.BOUNDS_HI))
-check("NDIM = 13", pc.NDIM == 13)
+check("NDIM = 15 (13 legacy + phi_slope/Rx_slope, fase 8)",
+      pc.NDIM == 15 and pc.NDIM_LEGACY == 13
+      and pc.VAR_NAMES[13] == "phi_slope" and pc.VAR_NAMES[14] == "Rx_slope"
+      and pc.VAR_NAMES[10] == "T0_in")   # el punto de operación no se movió
 
 # ==========================================================================
 print("— T2 · identidades de triángulos y consistencia termodinámica")
@@ -504,6 +507,48 @@ for _rpm_f in np.linspace(0.9, 1.1, 9):
         _ok_cont &= abs(_m - _prev_m) < 0.35
     _prev_m = _m
 check("margen de Campbell continuo con RPM (sin saltos > 0.35)", _ok_cont)
+
+# ==========================================================================
+print("— T14 · θ 15-D: padding, pendientes por etapa y per_stage (fase 8)")
+_t15 = pc.pad_theta(THETA_REF)
+_r13 = pc._meanline(THETA_REF)
+_r15 = pc._meanline(_t15)
+check("pad_theta: θ 13-D ≡ 15-D con pendientes 0 (bit-exacto)",
+      len(_t15) == 15 and _t15[13] == 0.0 and _t15[14] == 0.0
+      and abs(_r13["PR"] - _r15["PR"]) < 1e-12
+      and abs(_r13["eta_poly"] - _r15["eta_poly"]) < 1e-12
+      and max(abs(a - b) for a, b in zip(_r13["g"], _r15["g"])) < 1e-12)
+
+_ts = _t15.copy(); _ts[13] = -0.15; _ts[14] = 0.10
+_rs = pc._meanline(_ts)
+_phis = [s["phi"] for s in _rs["stage_table"]]
+_rxs = [s["Rx"] for s in _rs["stage_table"]]
+check("pendientes activas: φ cae y Rx sube hacia atrás (ξ lineal)",
+      all(_phis[i] > _phis[i + 1] for i in range(len(_phis) - 1))
+      and all(_rxs[i] < _rxs[i + 1] for i in range(len(_rxs) - 1))
+      and abs(_rs["PR"] - _r15["PR"]) > 1e-3,
+      f"φ {_phis[0]:.3f}→{_phis[-1]:.3f}  Rx {_rxs[0]:.3f}→{_rxs[-1]:.3f}")
+
+_n4 = _rs["n_stages"]
+_ps = dict(phi=[float(THETA_REF[3])] * _n4, Rx=[float(THETA_REF[6])] * _n4)
+_rp = pc._meanline(_t15, per_stage=_ps)
+check("per_stage constante ≡ distribuciones escalares",
+      abs(_rp["PR"] - _r15["PR"]) < 1e-12
+      and abs(_rp["eta_poly"] - _r15["eta_poly"]) < 1e-12)
+
+spec_s = no.DesignSpec(PR_target=4.0, massflow=25.0, material=None,
+                       fixed_vars={"phi_slope": 0.1, "Rx_slope": -0.05})
+th_s = spec_s.fix_operating_point(THETA_REF)      # legacy 13 → pad + fix
+check("fixed_vars: pendientes fijables; fix_operating_point paddea",
+      len(th_s) == 15 and th_s[13] == 0.1 and th_s[14] == -0.05
+      and th_s[12] == spec_s.massflow)
+
+res12 = no.evaluate_design(no.DesignSpec(material=None),
+                           np.concatenate([THETA_REF[:10], [-0.15, 0.10]]),
+                           fidelity=pc.Fidelity.L0)
+check("evaluate_design: 12 valores (10 diseño + 2 pendientes)",
+      len(res12["theta"]) == 15 and res12["theta"][13] == -0.15
+      and res12["record"]["PR"] > 1.0)
 
 # ==========================================================================
 print(f"\n{_n_pass}/{_n_pass + _n_fail} checks OK"

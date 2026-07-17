@@ -108,9 +108,17 @@ def parse_args(argv=None):
     d.add_argument("--eval-theta", type=str, default=None,
                    metavar="V1,V2,...",
                    help="evaluate ONE given design and emit the full "
-                        f"deliverables: {NDIM - 3} design values "
-                        f"({', '.join(VAR_NAMES[:10])}) or the full "
-                        f"{NDIM} incl. T0,P0,mdot")
+                        "deliverables. Accepts 10 design values "
+                        f"({', '.join(VAR_NAMES[:10])}), 12 (those 10 + "
+                        "phi_slope,Rx_slope), 13 (legacy full theta incl. "
+                        f"T0,P0,mdot) or {NDIM} (full theta, op point at "
+                        "positions 11-13)")
+    d.add_argument("--per-stage", type=str, default=None, metavar="FILE",
+                   help="expert mode (with --eval-theta): JSON with "
+                        "per-stage overrides {\"phi\": [...], \"psi\": "
+                        "[...], \"Rx\": [...]} (lists of n_stages values) "
+                        "replacing the linear-slope distributions; "
+                        "meanline L0 only")
     d.add_argument("--from-checkpoint", type=str, default=None,
                    help="checkpoint for --list-pareto / --pareto-pick "
                         "(default <outdir>/phyac_run.json)")
@@ -545,11 +553,18 @@ def main(argv=None) -> int:
         try:
             vals = [float(x) for x in re.split(r"[,\s]+",
                                                args.eval_theta.strip()) if x]
-            if len(vals) == len(VAR_NAMES):
+            # θ completo (13 legacy o 15): el punto de operación viaja en
+            # las posiciones 10-12 y sobreescribe los flags del spec
+            if len(vals) in (13, len(VAR_NAMES)):
                 spec.T0_in, spec.P0_in, spec.massflow = (vals[10], vals[11],
                                                          vals[12])
-            result = evaluate_design(spec, np.array(vals), fidelity=fidelity)
-        except ValueError as e:
+            per_stage = None
+            if args.per_stage:
+                with open(args.per_stage, encoding="utf-8") as f:
+                    per_stage = json.load(f)
+            result = evaluate_design(spec, np.array(vals), fidelity=fidelity,
+                                     per_stage=per_stage)
+        except (ValueError, OSError) as e:
             print(ui.warn(str(e)))
             return 2
         print(ui.panel("Direct evaluation (no optimization)", [

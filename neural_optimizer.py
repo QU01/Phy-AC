@@ -26,8 +26,8 @@ import numpy as np
 
 from physics_core import (
     Fidelity, evaluate, evaluate_batch, physics_features,
-    denormalize, normalize, VAR_NAMES, NDIM, N_FEATURES,
-    N_CONSTRAINTS,
+    denormalize, normalize, VAR_NAMES, NDIM, NDIM_LEGACY, N_FEATURES,
+    N_CONSTRAINTS, pad_theta,
 )
 import structures_core
 
@@ -249,7 +249,10 @@ class DesignSpec:
                 f"{', '.join(structures_core.list_materials())} (o None)")
         self.material = material
         self.fixed_vars = {k: float(v) for k, v in (fixed_vars or {}).items()}
-        design_names = VAR_NAMES[:10]
+        # variables de diseño fijables: todas menos el punto de operación
+        # (incluye las pendientes phi_slope/Rx_slope de la fase 8)
+        design_names = [n for n in VAR_NAMES
+                        if n not in ("T0_in", "P0_in", "massflow")]
         for name in self.fixed_vars:
             if name in ("T0_in", "P0_in", "massflow"):
                 raise ValueError(
@@ -265,8 +268,9 @@ class DesignSpec:
     def fix_operating_point(self, theta: np.ndarray) -> np.ndarray:
         """Fija el punto de operación del spec y las fixed_vars del
         ingeniero. TODA evaluación (LHS, NSGA-II, adquisición) pasa por
-        aquí, así que fijar una variable colapsa esa dimensión."""
-        theta = np.asarray(theta, dtype=float).copy()
+        aquí, así que fijar una variable colapsa esa dimensión. Acepta θ
+        legacy de 13 (se paddea a 15 con pendientes 0 — fase 8)."""
+        theta = pad_theta(theta).copy()
         theta[10], theta[11], theta[12] = (self.T0_in, self.P0_in,
                                            self.massflow)
         for idx, val in self._fixed_idx:
@@ -526,8 +530,14 @@ class AutonomousAxialDesigner:
         spec = DesignSpec(**spec_kw)
         d = cls(spec, fidelity=fidelity, n_workers=n_workers, log=log,
                 seed=payload.get("seed", SEED) if seed is None else seed)
+        n_legacy = sum(1 for row in payload.get("dataset", [])
+                       if len(row["theta"]) == NDIM_LEGACY)
+        if n_legacy:
+            log(f"[load] checkpoint legacy: {n_legacy} θ de "
+                f"{NDIM_LEGACY}-D paddeados a {NDIM}-D (pendientes 0 — "
+                "bit-exacto con el espacio pre-fase-8).")
         for row in payload.get("dataset", []):
-            t = np.asarray(row["theta"], dtype=float)
+            t = pad_theta(np.asarray(row["theta"], dtype=float))
             rec = evaluate(t, fidelity=Fidelity.L0, use_cache=False,
                            calibrate=False)
             rec.update({k: float(row[k]) for k in OUT_KEYS if k in row})
@@ -710,24 +720,36 @@ def scalar_fitness(spec: DesignSpec, rec: dict, theta: np.ndarray) -> float:
 
 
 def evaluate_design(spec: DesignSpec, theta_design,
-                    fidelity=Fidelity.L0) -> dict:
+                    fidelity=Fidelity.L0, per_stage: dict | None = None) -> dict:
     """Evalúa UN diseño dado por el ingeniero, SIN optimizar.
 
-    `theta_design`: las 10 variables de diseño (VAR_NAMES[:10]) — el punto
-    de operación lo pone el spec — o el θ completo de 13. Devuelve un dict
-    con la misma forma que design(): {theta, record, fitness, history,
-    pareto_front} (front de 1 punto), listo para geometría/reporte/STL."""
+    `theta_design` acepta cuatro longitudes (fase 8):
+      10 — variables de diseño legacy (VAR_NAMES[:10]); el punto de
+           operación lo pone el spec y las pendientes quedan en 0.
+      12 — las 10 anteriores + phi_slope + Rx_slope (sin punto de
+           operación — lo pone el spec).
+      13 — θ legacy completo (incluye T0,P0,ṁ); pendientes en 0.
+      15 — θ completo de la fase 8.
+    `per_stage` (modo experto): override {"phi"/"psi"/"Rx": [...]} — ver
+    physics_core.evaluate. Devuelve un dict con la misma forma que
+    design(): {theta, record, fitness, history, pareto_front} (front de
+    1 punto), listo para geometría/reporte/STL."""
     theta = np.asarray(theta_design, dtype=float).ravel()
-    if theta.shape[0] == NDIM - 3:
-        theta = np.concatenate([theta, [spec.T0_in, spec.P0_in,
-                                        spec.massflow]])
-    if theta.shape[0] != NDIM:
+    op = [spec.T0_in, spec.P0_in, spec.massflow]
+    n = theta.shape[0]
+    if n == 10:
+        theta = np.concatenate([theta, op, [0.0, 0.0]])
+    elif n == 12:
+        theta = np.concatenate([theta[:10], op, theta[10:12]])
+    elif n == NDIM_LEGACY:
+        theta = pad_theta(theta)
+    elif n != NDIM:
         raise ValueError(
-            f"theta debe tener {NDIM - 3} valores ({', '.join(VAR_NAMES[:10])})"
-            f" o {NDIM} incluyendo T0_in, P0_in, massflow — llegaron "
-            f"{theta.shape[0]}")
+            "theta debe tener 10 variables de diseño, 12 (10+pendientes), "
+            f"{NDIM_LEGACY} (θ legacy completo) o {NDIM} (θ completo) — "
+            f"llegaron {n}")
     theta = spec.fix_operating_point(theta)
-    rec = evaluate(theta, fidelity=fidelity)
+    rec = evaluate(theta, fidelity=fidelity, per_stage=per_stage)
     rec["_theta"] = theta.tolist()
     fit = scalar_fitness(spec, rec, theta)
     feasible = bool(spec.violation(spec.constraints(rec, theta)) <= 1e-9)

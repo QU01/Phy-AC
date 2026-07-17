@@ -118,6 +118,8 @@ python phyac_cli.py --pr 4 --mdot 25 --fix n_stages=5 --fix phi1=0.60 --seed 42
 #  sigma_r,sigma_s,AR — the operating point comes from the spec flags):
 python phyac_cli.py --eval-theta "4,12500,0.62,0.55,0.32,-0.10,0.60,1.20,1.10,2.20" \
     --pr 4 --mdot 25 --outdir runs/eval --map     # --map-vsv: auto VSV schedule
+#   (12 values = those 10 + phi_slope,Rx_slope; 13/15 = full theta.
+#    Expert mode: --per-stage dist.json overrides phi/psi/Rx per stage)
 
 # Warm-start a run from its checkpoint (dataset replaces the LHS):
 python phyac_cli.py --outdir runs/pr4 --resume --rounds 3
@@ -182,7 +184,7 @@ C# phase outputs: one STL per part plus the union views (binary, in mm).
 | `AxialCompressorDesigner/` | 5c | C# library + PicoGK: imports `axial_compressor.json` (`PhyACImport`) and builds shaft, bladed discs and casing rings as printable STLs. |
 | `AxialCompressorDesigner.Example/` | 5c | Executable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | product | End-to-end CLI: spec → design → geometry → report → dataset [→ STLs via --stl/--voxel]. |
-| `test_phyac.py` | VV&UQ | Verification suite: 74 checks (triangles, conservation, g continuity, profiles, contract, disc solver, optimizer core, overlap regression). |
+| `test_phyac.py` | VV&UQ | Verification suite: 79 checks (triangles, conservation, g continuity, profiles, contract, disc solver, optimizer core, overlap regression). |
 | `validation/` | VV&UQ | Validation campaign vs NASA Stage 35, Rotor 37/67 and GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## Python API (layers 1–5b)
@@ -281,7 +283,7 @@ Phy-AC/
 ├── report_generator.py                   layer 5b  self-contained HTML report
 ├── visualization.py                      layer 5b  matplotlib figures (optional)
 ├── phyac_cli.py                          end-to-end CLI (spec → design → report [→ STLs])
-├── test_phyac.py                         verification suite (74 checks)
+├── test_phyac.py                         verification suite (79 checks)
 │
 ├── validation/                           validation campaign (machines.py, validate.py)
 ├── data/                                 in-repo correlation anchors + manifest.json
@@ -366,7 +368,7 @@ independent voxel fields built in the same `Library.Go` session.
 ## Verification and Validation
 
 ```bash
-python test_phyac.py               # verification: 74 checks
+python test_phyac.py               # verification: 79 checks
 python validation/validate.py      # validation: NASA machines → RESULTS.md
 python data_pipeline.py            # data anchors: rebuild + SHA-256 verify
 ```
@@ -386,10 +388,10 @@ Current table in [validation/RESULTS.md](validation/RESULTS.md):
 
 | Machine | ΔPR | Δη |
 |---|---|---|
-| NASA Stage 35 (transonic stage) | +0.9% | +1.3 pts |
-| NASA Rotor 37 (transonic rotor) | −1.8% | −2.3 pts |
-| NASA Rotor 67 (transonic fan) | −1.2% | −2.5 pts |
-| GE/NASA E³ HPC (10 stages) | −4.4% | −1.3 pts |
+| NASA Stage 35 (transonic stage) | +0.8% | +1.2 pts |
+| NASA Rotor 37 (transonic rotor) | −1.1% | −1.5 pts |
+| NASA Rotor 67 (transonic fan) | −0.7% | −1.4 pts |
+| GE/NASA E³ HPC (10 stages) | −4.8% | −1.4 pts |
 
 Adding a machine is a data entry in
 [validation/machines.py](validation/machines.py); internal regression
@@ -397,10 +399,13 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
 
 ## Current Status and Declared Limits (v0.1)
 
-- **Repeating-stage parameterization** (ψ_mid + ψ_slope, single Rx/φ):
-  real multistage machines vary φ/Rx per stage — the E³ validation
-  tolerance is relaxed for this, and it is the first candidate for a
-  richer θ in a later phase.
+- **Per-stage parameterization** (phase 8): the 15-D θ carries linear
+  front→rear slopes of φ and Rx (plus the ψ slope it always had) — the
+  first-order pattern of real multistage machines; the E³ tolerance was
+  tightened 8%→6% with its slopes declared. Arbitrary per-stage
+  distributions are the expert-mode `per_stage` override
+  (`--eval-theta --per-stage file.json`, meanline-only), deliberately
+  outside the search space.
 - **L0 shock model** is a two-point normal-shock average with
   K_SHOCK = 0.70 calibrated on Rotor 37/67; beyond M_tip ≈ 1.5 it is
   extrapolation.
@@ -420,6 +425,13 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
 
 ## History
 
+- **2026-07-17 — per-stage θ (phase 8)**: 15-D design vector with linear
+  φ/Rx front→rear slopes appended at the end (operating-point indices
+  untouched); legacy 13-D θ, checkpoints and anchors are padded with
+  zero slopes **bit-exactly** (anchors NOT re-frozen); expert-mode
+  `per_stage` override + `--per-stage`; E³ validation declares its
+  slopes (φ falls, Rx rises rearward) and its PR tolerance tightens
+  8%→6% (−5.55%→−4.80%).
 - **2026-07-17 — blade dynamics (phase 7)**: rotating-cantilever natural
   frequencies (Southwell), **Campbell margin vs blade-passing orders as
   the 5th hard g_struct component**, Peterson fillet K_t on the root

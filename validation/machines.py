@@ -114,17 +114,27 @@ MACHINES = [
         #                    con ε cte las etapas traseras (h pequeña)
         #                    dominan la pérdida de holgura, como en la
         #                    máquina real.
-        tol=dict(PR_rel=0.08, eta_pts=0.03),
+        slopes=dict(phi_slope=-0.10, Rx_slope=0.10),
+        #   Distribución por etapa (θ 15-D, fase 8): pendientes en la
+        #   dirección de la práctica real de HPCs (φ cae hacia atrás, Rx
+        #   crece hacia atrás), magnitud APROXIMADA — el CR-165558
+        #   (detailed design) no está accesible para digitalizar la
+        #   distribución real. Recuperan ~0.75 pts del déficit de PR
+        #   (−5.55% → −4.80%); el resto NO es de parametrización (candidatos:
+        #   cp constante a τ≈2.4, acumulación de bloqueo, WDF). Sustituir
+        #   por la tabla del CR cuando haya fuente estable.
+        tol=dict(PR_rel=0.06, eta_pts=0.03),
+        #   PR_rel endurecida 0.08 → 0.06 con las pendientes de fase 8.
         source=("GE Aircraft Engines, NASA CR-168919 / programa Energy "
                 "Efficient Engine: HPC de 10 etapas, PR 23, ~54.4 kg/s "
                 "corregidos, velocidad de punta corregida ~456 m/s, "
                 "radio de cubo/punta de entrada ~0.5. ENTRADA APROXIMADA: "
                 "verificar contra el CR antes de endurecer tolerancias."),
         notes=("Multietapa con estátores variables y φ/Rx variables por "
-               "etapa que la parametrización de etapa repetida (ψ_mid + "
-               "ψ_slope) solo aproxima — por eso la tolerancia relajada "
-               "(plan §validación). Ancla la acumulación de bloqueo y el "
-               "work-done factor."),
+               "etapa; desde la fase 8 la distribución se aproxima con "
+               "pendientes lineales (campo `slopes`, fit de 2 parámetros "
+               "APROXIMADO — ver comentario). Ancla la acumulación de "
+               "bloqueo y el work-done factor."),
     ),
 ]
 

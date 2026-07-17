@@ -49,15 +49,15 @@ import numpy as np
 warnings.filterwarnings("ignore")
 
 # ==========================================================================
-# 0. Espacio de diseño (14-D) — distribuciones escalares, sin parámetros
-#    libres por etapa (ver plan §L0 y docs/Science.md)
+# 0. Espacio de diseño (15-D) — distribuciones escalares + pendientes por
+#    etapa (fase 8; ver docs/PLAN_Fases_7_8.md §8.1 y docs/Science.md §1.1)
 # ==========================================================================
 DESIGN_VARS = [
     # nombre          min        max          unidad
     ("n_stages",      1.0,       8.0),        # -    (se redondea a entero)
     ("RPM",       5_000.0,  25_000.0),        # rev/min
     ("HTR_in",        0.40,      0.80),       # -    hub-to-tip ratio entrada
-    ("phi1",          0.35,      0.80),       # -    coef. de flujo Cx/Um
+    ("phi1",          0.35,      0.80),       # -    coef. de flujo Cx/Um (medio)
     ("psi_mid",       0.22,      0.45),       # -    carga media Δh0/Um²
     ("psi_slope",    -0.30,      0.30),       # -    gradiente de ψ frontal→trasero
     ("Rx_mean",       0.50,      0.85),       # -    grado de reacción medio
@@ -67,6 +67,13 @@ DESIGN_VARS = [
     ("T0_in",       270.0,     320.0),        # K
     ("P0_in",    85_000.0, 110_000.0),        # Pa
     ("massflow",      5.0,      60.0),        # kg/s
+    # --- fase 8: pendientes lineales por etapa (AL FINAL: los índices
+    #     10-12 del punto de operación no se mueven — compatibilidad de
+    #     checkpoints, fix_operating_point y CLI). φ cae hacia atrás y Rx
+    #     sube en las máquinas reales (E³): φ_i = φ1·(1+s_φ·ξ_i),
+    #     Rx_i = Rx·(1+s_Rx·ξ_i), ξ_i = 2i/(N−1)−1 (esquema de psi_slope).
+    ("phi_slope",    -0.25,      0.25),       # -    gradiente de φ frontal→trasero
+    ("Rx_slope",     -0.20,      0.20),       # -    gradiente de Rx frontal→trasero
 ]
 # NOTA: r_tip de entrada NO es variable de diseño — queda DERIVADO de la
 # continuidad (dados φ1, HTR, RPM, ṁ el annulus de entrada es único). Con
@@ -76,6 +83,7 @@ VAR_NAMES = [v[0] for v in DESIGN_VARS]
 BOUNDS_LO = np.array([v[1] for v in DESIGN_VARS])
 BOUNDS_HI = np.array([v[2] for v in DESIGN_VARS])
 NDIM = len(DESIGN_VARS)
+NDIM_LEGACY = 13          # θ pre-fase-8 (sin pendientes) — ver pad_theta
 
 GAMMA, CP, RGAS = 1.4, 1005.0, 287.0
 MU_AIR = 1.81e-5          # Pa·s
@@ -158,18 +166,38 @@ class Fidelity(IntEnum):
     L1 = 1   # SCM turbo-design (si está disponible)
 
 
+def pad_theta(theta: np.ndarray) -> np.ndarray:
+    """θ legacy de 13 (pre-fase-8, sin pendientes) → 15-D con
+    phi_slope = Rx_slope = 0.0.
+
+    Con pendientes cero las distribuciones por etapa colapsan EXACTAMENTE
+    a los escalares (φ_i = φ1·1.0, bit-exacto), así que un θ viejo produce
+    el mismo record que antes de la fase 8 — las anclas de regresión y los
+    checkpoints antiguos siguen siendo válidos sin re-congelar nada.
+    """
+    theta = np.asarray(theta, dtype=float).ravel()
+    if theta.shape[0] == NDIM:
+        return theta
+    if theta.shape[0] == NDIM_LEGACY:
+        return np.concatenate([theta, [0.0, 0.0]])
+    raise ValueError(
+        f"theta debe tener {NDIM_LEGACY} (legacy) o {NDIM} componentes — "
+        f"llegaron {theta.shape[0]}")
+
+
 def denormalize(u: np.ndarray) -> np.ndarray:
-    """[0,1]^14 -> unidades físicas."""
+    """[0,1]^15 -> unidades físicas."""
     return BOUNDS_LO + np.asarray(u, dtype=float) * (BOUNDS_HI - BOUNDS_LO)
 
 
 def normalize(theta: np.ndarray) -> np.ndarray:
-    return (np.asarray(theta, dtype=float) - BOUNDS_LO) / (BOUNDS_HI - BOUNDS_LO)
+    return (pad_theta(theta) - BOUNDS_LO) / (BOUNDS_HI - BOUNDS_LO)
 
 
-def _theta_key(theta: np.ndarray, fidelity: int) -> str:
+def _theta_key(theta: np.ndarray, fidelity: int, extra: str = "") -> str:
     arr = np.round(np.asarray(theta, dtype=float), 9)
-    return hashlib.sha1(arr.tobytes() + bytes([fidelity])).hexdigest()
+    return hashlib.sha1(arr.tobytes() + bytes([fidelity])
+                        + extra.encode()).hexdigest()
 
 
 # ==========================================================================
@@ -483,27 +511,37 @@ def _incidence_bucket(inc_deg: float, m1_rel: float) -> float:
 def _meanline(theta: np.ndarray, rpm: float | None = None,
               mdot: float | None = None,
               frozen: dict | None = None,
-              vsv_deg: float = 0.0) -> dict:
+              vsv_deg: float = 0.0,
+              per_stage: dict | None = None) -> dict:
     """Stage-stacking 1-D en la línea media, termodinámicamente consistente.
 
     Punto de diseño: `_meanline(theta)` — los ángulos de flujo salen de
-    (φ, ψᵢ, Rx) y el álabe se talla a incidencia cero (convención del
-    generador de geometría). Fuera de diseño: pasar `rpm`/`mdot` y
-    `frozen` (dict devuelto en record["frozen"] del diseño: ángulos de
-    flujo y áreas congelados); la incidencia paga el bucket W(M) de
-    `_incidence_bucket`, y el sub-giro por desviación crece con la
-    incidencia positiva (K_DEV_OFFDESIGN). `vsv_deg` > 0 cierra los
-    estátores variables frontales (más pre-swirl → menos incidencia del
-    rotor a baja velocidad): ángulo pleno en la etapa 0 decayendo
-    linealmente a 0 hacia la etapa n/2. En diseño (i = 0, vsv = 0) nada
-    de esto altera el resultado.
+    (φᵢ, ψᵢ, Rxᵢ) y el álabe se talla a incidencia cero (convención del
+    generador de geometría). Desde la fase 8 las distribuciones por etapa
+    son pendientes lineales (θ[13]=phi_slope, θ[14]=Rx_slope, mismo
+    esquema ξᵢ que psi_slope); con pendientes 0 colapsan bit-exacto a los
+    escalares. `per_stage` (modo experto, nivel 8b): dict opcional
+    {"phi": [...], "psi": [...], "Rx": [...]} de longitud n_stages que
+    SOBREESCRIBE las distribuciones — no entra al espacio de búsqueda
+    (se usa desde --eval-theta --per-stage y la validación E³).
+
+    Fuera de diseño: pasar `rpm`/`mdot` y `frozen` (dict devuelto en
+    record["frozen"] del diseño: ángulos de flujo y áreas congelados); la
+    incidencia paga el bucket W(M) de `_incidence_bucket`, y el sub-giro
+    por desviación crece con la incidencia positiva (K_DEV_OFFDESIGN).
+    `vsv_deg` > 0 cierra los estátores variables frontales (más pre-swirl
+    → menos incidencia del rotor a baja velocidad): ángulo pleno en la
+    etapa 0 decayendo linealmente a 0 hacia la etapa n/2. En diseño
+    (i = 0, vsv = 0) nada de esto altera el resultado.
 
     Convención de triángulos (Dixon, ángulos desde el eje, Cx constante
     en el diseño): Cu1/U = 1−Rx−ψ/2, Cu2/U = 1−Rx+ψ/2,
     tanβ = (U−Cu)/Cx, tanα = Cu/Cx.
     """
+    theta = pad_theta(theta)
     (n_st_f, RPM_d, HTR, phi1, psi_mid, psi_slope, Rx,
-     sigma_r, sigma_s, AR, T0_in, P0_in, mdot_d) = [float(x) for x in theta]
+     sigma_r, sigma_s, AR, T0_in, P0_in, mdot_d,
+     phi_slope, Rx_slope) = [float(x) for x in theta]
     # clamp de seguridad holgado (los bounds del optimizador son 1-8; la
     # validación evalúa máquinas de hasta 10+ etapas fuera de bounds)
     n_st = int(round(min(max(n_st_f, 1.0), 16.0)))
@@ -512,19 +550,42 @@ def _meanline(theta: np.ndarray, rpm: float | None = None,
     off_design = frozen is not None
     clipped: list[str] = []
 
+    # --- Distribuciones por etapa (fase 8) --------------------------------
+    # ξ_i = 2i/(N−1)−1; con pendiente 0, φ_i = φ1·1.0 (bit-exacto con el
+    # espacio 13-D legacy). Clamps suaves para θ degenerado (g continuo).
+    def _xi(i: int) -> float:
+        return (2.0 * i / (n_st - 1) - 1.0) if n_st > 1 else 0.0
+
+    phi_st = [max(phi1 * (1.0 + phi_slope * _xi(i)), 0.05)
+              for i in range(n_st)]
+    Rx_st = [Rx * (1.0 + Rx_slope * _xi(i)) for i in range(n_st)]
+    psi_st = [max(psi_mid * (1.0 + psi_slope * _xi(i)), 0.05)
+              for i in range(n_st)]
+    if per_stage:
+        for key, dst in (("phi", phi_st), ("psi", psi_st), ("Rx", Rx_st)):
+            if key in per_stage:
+                vals = list(per_stage[key])
+                if len(vals) != n_st:
+                    raise ValueError(
+                        f"per_stage['{key}'] debe tener n_stages={n_st} "
+                        f"valores — llegaron {len(vals)}")
+                lo = 0.05 if key in ("phi", "psi") else -2.0
+                dst[:] = [max(float(v), lo) for v in vals]
+
     omega = RPM * 2 * math.pi / 60.0
     a0_in = math.sqrt(GAMMA * RGAS * T0_in)
     rho0_in = P0_in / (RGAS * T0_in)
 
     # --- Annulus de entrada: r_tip DERIVADO de la continuidad --------------
-    # Dados (φ1, HTR, RPM, ṁ): Cx = φ1·ω·r_mean y A = π·r_tip²(1−HTR²)
-    # deben transportar ṁ — punto fijo en r_tip (único y contractivo).
-    psi_first = psi_mid * (1.0 + psi_slope * (-1.0)) if n_st > 1 else psi_mid
-    tan_a1_first = (1.0 - Rx - max(psi_first, 0.05) / 2.0) / phi1
+    # Dados (φ_0, HTR, RPM, ṁ): Cx = φ_0·ω·r_mean y A = π·r_tip²(1−HTR²)
+    # deben transportar ṁ — punto fijo en r_tip (único y contractivo). La
+    # etapa 0 manda: su φ define el annulus de entrada (con pendientes, la
+    # etapa frontal corre a φ1·(1−s_φ)).
+    tan_a1_first = (1.0 - Rx_st[0] - psi_st[0] / 2.0) / phi_st[0]
     r_tip = 0.20
     for _ in range(80):
         r_mean_i = 0.5 * (1.0 + HTR) * r_tip
-        Cx_i = phi1 * omega * r_mean_i
+        Cx_i = phi_st[0] * omega * r_mean_i
         C1_i = Cx_i * math.sqrt(1.0 + tan_a1_first ** 2)
         if C1_i > 0.95 * a0_in:
             C1_i = 0.95 * a0_in
@@ -536,7 +597,7 @@ def _meanline(theta: np.ndarray, rpm: float | None = None,
             r_tip = r_tip_new
             break
         r_tip = 0.5 * (r_tip + r_tip_new)
-    if phi1 * omega * 0.5 * (1.0 + HTR) * r_tip * \
+    if phi_st[0] * omega * 0.5 * (1.0 + HTR) * r_tip * \
             math.sqrt(1.0 + tan_a1_first ** 2) > 0.95 * a0_in:
         clipped.append("inlet_C1_sonic")
     r_hub = HTR * r_tip
@@ -564,11 +625,8 @@ def _meanline(theta: np.ndarray, rpm: float | None = None,
         U = omega * (frozen["r_m"][i] if off_design and i < len(frozen["r_m"])
                      else r_mean)
         wdf = _HOWELL_WDF[min(i, len(_HOWELL_WDF) - 1)]
-        if n_st > 1:
-            psi_i = psi_mid * (1.0 + psi_slope * (2.0 * i / (n_st - 1) - 1.0))
-        else:
-            psi_i = psi_mid
-        psi_i = max(psi_i, 0.05)
+        psi_i = psi_st[i]
+        Rx_i = Rx_st[i]
 
         if off_design:
             tan_a1 = frozen["alpha1"][i]
@@ -585,7 +643,7 @@ def _meanline(theta: np.ndarray, rpm: float | None = None,
             tan_b2_fr = frozen["beta2"][i]
             A_in = frozen["areas"][i]
         else:
-            tan_a1 = (1.0 - Rx - psi_i / 2.0) / phi1
+            tan_a1 = (1.0 - Rx_i - psi_i / 2.0) / phi_st[i]
             tan_b2_fr = None
             A_in = frozen_out["areas"][i]
 
@@ -618,8 +676,8 @@ def _meanline(theta: np.ndarray, rpm: float | None = None,
             Cu1 = Cx * tan_a1
             Cu2 = U - Cx * tan_b2
         else:
-            Cu1 = (1.0 - Rx - psi_i / 2.0) * U
-            Cu2 = (1.0 - Rx + psi_i / 2.0) * U
+            Cu1 = (1.0 - Rx_i - psi_i / 2.0) * U
+            Cu2 = (1.0 - Rx_i + psi_i / 2.0) * U
             psi_eff = psi_i
             tan_b2 = (U - Cu2) / max(Cx, 1e-3)
 
@@ -730,7 +788,7 @@ def _meanline(theta: np.ndarray, rpm: float | None = None,
         A_rotor_exit = mdot / max(rho2_st * Cx * kb, 1e-6)
 
         stage_table.append(dict(
-            stage=i, phi=phi, psi=psi_eff, Rx=Rx, Rx_hub=Rx_hub, U_m=U,
+            stage=i, phi=phi, psi=psi_eff, Rx=Rx_i, Rx_hub=Rx_hub, U_m=U,
             A_rotor_exit_m2=A_rotor_exit, A_in_m2=A_in,
             r_mean_mm=r_mean * 1000, r_hub_mm=r_hub_i * 1000,
             r_tip_mm=r_tip_i * 1000, h_blade_mm=h_blade * 1000,
@@ -762,10 +820,12 @@ def _meanline(theta: np.ndarray, rpm: float | None = None,
         # constante; en const_mean, r_mean fijo y h se ajusta)
         if not off_design:
             # Área de la siguiente estación que MANTIENE el Cx de diseño
-            # (φ1·Um), evaluada con el estado (T0,P0) tras la etapa. Para la
-            # última estación el remolino ya fue quitado por el OGV.
+            # de la etapa que la recibe (φ_{i+1}·Um; con pendientes el Cx
+            # de diseño varía etapa a etapa), evaluada con el estado
+            # (T0,P0) tras la etapa. Para la última estación (salida tras
+            # el OGV, remolino ya quitado) manda el φ de la última etapa.
             tan_a_next = tan_a1 if i < n_st - 1 else 0.0
-            Cx_dsg = phi1 * omega * r_mean
+            Cx_dsg = phi_st[min(i + 1, n_st - 1)] * omega * r_mean
             C_n = Cx_dsg * math.sqrt(1.0 + tan_a_next ** 2)
             T_n = max(T0 - C_n ** 2 / (2 * CP), 0.5 * T0)
             rho_n = (P0 / (RGAS * T0)) * (T_n / T0) ** (1.0 / (GAMMA - 1))
@@ -889,7 +949,7 @@ def offdesign(theta: np.ndarray, rpm: float, mdot: float,
     """Evalúa el diseño theta en otro punto (RPM, ṁ) con la geometría
     congelada del diseño (ángulos de flujo y áreas). `vsv_deg` cierra los
     estátores variables frontales (ver _meanline)."""
-    theta = np.asarray(theta, dtype=float)
+    theta = pad_theta(theta)
     if frozen is None:
         frozen = _meanline(theta)["frozen"]
     frozen = dict(frozen)
@@ -915,7 +975,7 @@ def compressor_map(theta: np.ndarray,
     los VSV frontales Δ = VSV_GAIN_DEG·(1−N/Nd) (tope VSV_MAX_DEG, solo
     a N < Nd) — schedule lineal realista de primer orden.
     """
-    theta = np.asarray(theta, dtype=float)
+    theta = pad_theta(theta)
     base = _meanline(theta)
     frozen = dict(base["frozen"])
     frozen.setdefault("phi_d", float(theta[3]))
@@ -1236,24 +1296,32 @@ _cache_load()
 
 
 def evaluate(theta: np.ndarray, fidelity: Fidelity = Fidelity.L1,
-             use_cache: bool = True, calibrate: bool = True) -> dict:
-    """Evalúa un punto de diseño físico (14-D, unidades físicas).
+             use_cache: bool = True, calibrate: bool = True,
+             per_stage: dict | None = None) -> dict:
+    """Evalúa un punto de diseño físico (15-D; acepta el θ legacy de 13
+    vía pad_theta — pendientes 0, bit-exacto con el espacio pre-fase-8).
 
     L1 corre el SCM axial y, si diverge o no está instalado, degrada a L0
     etiquetando la fuente. Siempre devuelve el record completo del
     meanline (stage_table, restricciones, banderas) — el SCM solo
     sobreescribe PR/eta cuando converge.
+
+    `per_stage` (modo experto, fase 8b): dict {"phi"/"psi"/"Rx": [...]}
+    que sobreescribe las distribuciones por etapa (ver _meanline). Entra
+    a la clave de caché y fuerza la ruta L0 pura (la transformación del
+    spool L1 no conoce el override).
     """
-    theta = np.asarray(theta, dtype=float)
-    key = _theta_key(theta, int(fidelity))
+    theta = pad_theta(theta)
+    extra = json.dumps(per_stage, sort_keys=True) if per_stage else ""
+    key = _theta_key(theta, int(fidelity), extra)
     if use_cache and key in _CACHE:
         rec = dict(_CACHE[key])
     else:
-        rec = _meanline(theta)
+        rec = _meanline(theta, per_stage=per_stage)
         rec.update({n: float(v) for n, v in zip(VAR_NAMES, theta)})
         rec["n_stages"] = int(round(theta[0]))
         rec["fidelity"] = int(fidelity)
-        if fidelity >= Fidelity.L1 and rec["feasible"]:
+        if fidelity >= Fidelity.L1 and rec["feasible"] and not per_stage:
             scm = _scm_solve(theta)
             if scm:
                 rec.update(scm)
