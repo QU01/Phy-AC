@@ -3,7 +3,7 @@
 //
 // Phy-AC (physics_core.py / neural_optimizer.py / geometry_generator.py)
 // optimizes a 13-D design vector and writes the verified result as
-// `axial_compressor.json` (schema phyac-axial-1) inside <outdir>/geometry/.
+// `axial_compressor.json` (schema phyac-axial-2) inside <outdir>/geometry/.
 // This class maps that file onto AxialCompressorParameters so the
 // optimized design can be built as printable rotor + casing STLs:
 //
@@ -23,16 +23,50 @@ namespace AxialCompressorDesigner
 {
     public static class PhyACImport
     {
+        /// <summary>
+        /// Major version of the `phyac-axial-N` contract this reader
+        /// understands. Kept in lockstep with contract_schema.SCHEMA_MAJOR
+        /// on the Python side; the published JSON Schema lives in
+        /// schemas/phyac-axial-N.schema.json.
+        /// </summary>
+        public const int nSCHEMA_MAJOR = 2;
+
         public static AxialCompressorParameters FromContractJson(
             string jsonPath, string outputName = null)
         {
             using JsonDocument oDoc = JsonDocument.Parse(File.ReadAllText(jsonPath));
             JsonElement oRoot = oDoc.RootElement;
 
+            // The trailing integer of `phyac-axial-N` is the MAJOR schema
+            // version. It goes up whenever a consumer written against the
+            // previous one can no longer read the file without silently
+            // losing information — so refusing an unknown major is the
+            // point, not an inconvenience. Reading a v1 file with a v2
+            // reader would fabricate defaults for the fir-tree retention,
+            // the disc tie bolts and the running clearances, and print a
+            // machine that never existed.
             if (!oRoot.TryGetProperty("schema", out JsonElement eSchema)
-                || !eSchema.GetString().StartsWith("phyac-axial"))
+                || !(eSchema.GetString() ?? "").StartsWith("phyac-axial-"))
                 throw new ArgumentException(
                     $"'{jsonPath}' is not a Phy-AC axial_compressor.json");
+
+            string strSchema = eSchema.GetString();
+            if (!int.TryParse(strSchema.Substring("phyac-axial-".Length),
+                              out int nMajor))
+                throw new ArgumentException(
+                    $"'{jsonPath}' declares schema '{strSchema}', whose "
+                    + "major version is not an integer");
+
+            if (nMajor != nSCHEMA_MAJOR)
+                throw new NotSupportedException(
+                    $"'{jsonPath}' is schema major {nMajor}; this reader "
+                    + $"supports {nSCHEMA_MAJOR} ('phyac-axial-"
+                    + $"{nSCHEMA_MAJOR}'). "
+                    + (nMajor < nSCHEMA_MAJOR
+                        ? "Regenerate the geometry with the current version "
+                          + "of Phy-AC (python phyac_cli.py ... --geometry)."
+                        : "Update layer 5c: the contract gained fields this "
+                          + "reader would silently replace with defaults."));
 
             var p = new AxialCompressorParameters();
 

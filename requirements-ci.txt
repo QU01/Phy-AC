@@ -1,0 +1,26 @@
+# Versiones FIJADAS del CI de Quasar Phy-AC.
+#
+# Por qué pinear: las anclas de regresión de la suite y las tolerancias de
+# la campaña de validación se comparan contra números guardados. Sin
+# versiones fijas, un cambio de NumPy que mueva el último dígito de una
+# reducción hace fallar el CI sin que se pueda distinguir «cambió la
+# física» de «cambió una dependencia». Subir un pin es un commit
+# deliberado, con la re-verificación de anclas que haga falta.
+#
+# Se corresponden con los extras declarados en pyproject.toml:
+#   viz  → matplotlib     l1 → turbo-design + cantera     step → cadquery
+
+numpy==2.4.6
+matplotlib==3.11.0
+
+# --- extra `step`: TODO el CAD detallado (STEP, ensamble, interferencias)
+cadquery==2.8.0
+
+# --- extra `l1`: spool SCM axial
+turbo-design==1.4.2
+cantera==3.2.0
+# turbo-design 1.4.2 NO declara `requests` entre sus dependencias y lo
+# importa de forma transitiva. Sin él, `_try_load_turbodesign` devuelve
+# False y TODO el sistema corre en L0 creyendo que corre en L1 — sin
+# ruido. Se pinea aquí explícitamente hasta que upstream lo declare.
+requests>=2.31

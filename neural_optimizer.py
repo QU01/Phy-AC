@@ -27,11 +27,24 @@ import numpy as np
 from physics_core import (
     Fidelity, evaluate, evaluate_batch, physics_features,
     denormalize, normalize, VAR_NAMES, NDIM, NDIM_LEGACY, N_FEATURES,
-    N_CONSTRAINTS, pad_theta,
+    N_CONSTRAINTS, pad_theta, SM_FLOW_MIN,
 )
 import structures_core
 
 SEED = 71  # semilla LEAP 71 :)
+
+#: Proxy margen-de-Koch (punto de diseño) → margen-en-gasto (línea de
+#: trabajo) para el lazo interno del NSGA-II, donde el valor real costaría
+#: 5 760 × 80 ms por ronda. Regresión sobre 59 diseños LHS factibles:
+#:
+#:      sm_flow ≈ 0.315·min_SM + 0.057      (r = 0.57)
+#:
+#: La correlación es DÉBIL a propósito de reportar: el margen de Koch en
+#: el punto de diseño NO determina el rango operativo — es exactamente el
+#: hallazgo que motivó la fase 9. El proxy solo ordena candidatos; el
+#: filtro real lo aplica `sm_flow` en cada evaluación física.
+SM_KOCH_TO_FLOW_A = 0.315
+SM_KOCH_TO_FLOW_B = 0.057
 rng = np.random.default_rng(SEED)
 
 # U2/Mu son alias del record axial (U_tip y Mach de punta) — se conservan
@@ -233,7 +246,8 @@ class DesignSpec:
     def __init__(self, PR_target=4.0, massflow=25.0, RPM_max=20_000,
                  U_tip_max=480.0, r_tip_max_mm=400.0, n_stages_max=8,
                  power_max_W=None, T0_in=288.15, P0_in=101_325.0,
-                 material="Ti-6Al-4V", fixed_vars=None):
+                 material="Ti-6Al-4V", fixed_vars=None,
+                 sm_flow_min=SM_FLOW_MIN):
         self.PR_target = PR_target
         self.massflow = massflow
         self.RPM_max = RPM_max
@@ -241,6 +255,7 @@ class DesignSpec:
         self.r_tip_max_mm = r_tip_max_mm
         self.n_stages_max = n_stages_max
         self.power_max_W = power_max_W
+        self.sm_flow_min = float(sm_flow_min)
         self.T0_in = T0_in
         self.P0_in = P0_in
         if material is not None and material not in structures_core.MATERIALS:
@@ -284,8 +299,8 @@ class DesignSpec:
         return np.array([f1, f2])
 
     def constraints(self, perf: dict, theta: np.ndarray) -> np.ndarray:
-        """[g_phys aero (8), U_tip, RPM, r_tip, n_stages, (potencia),
-        g_struct (4)].
+        """[g_phys aero (9), U_tip, RPM, r_tip, n_stages, margen de bombeo,
+        (potencia), g_struct (5)].
 
         g_struct es EXACTO (discos por etapa sobre el stage_table del
         meanline, ~1 ms), no una predicción del surrogate. Requiere que
@@ -295,7 +310,8 @@ class DesignSpec:
         g_spec = [perf["U2"] / self.U_tip_max - 1.0,
                   theta[1] / self.RPM_max - 1.0,
                   perf.get("r_tip_in_mm", 0.0) / self.r_tip_max_mm - 1.0,
-                  theta[0] / self.n_stages_max - 1.0]
+                  theta[0] / self.n_stages_max - 1.0,
+                  self._g_surge(perf)]
         if self.power_max_W:
             g_spec.append(perf["power_W"] / self.power_max_W - 1.0)
         parts = [g_phys, np.array(g_spec)]
@@ -309,6 +325,21 @@ class DesignSpec:
                 parts.append(np.full(structures_core.N_STRUCT_CONSTRAINTS,
                                      10.0))
         return np.concatenate(parts)
+
+    def _g_surge(self, perf: dict) -> float:
+        """Restricción de MARGEN DE BOMBEO en la línea de trabajo.
+
+        El margen que la industria especifica es en GASTO respecto al punto
+        de trabajo, no un coeficiente en el punto de diseño. Se usa el
+        valor REAL (`sm_flow`, ~80 ms) cuando el record lo trae — las
+        evaluaciones físicas del orquestador lo piden siempre — y, cuando
+        no (lazo interno del NSGA-II), la regresión documentada arriba.
+        """
+        sm = perf.get("sm_flow")
+        if sm is None:
+            sm = (SM_KOCH_TO_FLOW_A * float(perf.get("min_SM", 0.0))
+                  + SM_KOCH_TO_FLOW_B)
+        return (self.sm_flow_min - float(sm)) / max(self.sm_flow_min, 1e-3)
 
     @staticmethod
     def violation(g: np.ndarray) -> float:
@@ -375,11 +406,20 @@ def _crowding(F, idxs):
 class NSGA2:
     """NSGA-II sobre el surrogate (objetivos LCB-conservadores)."""
 
-    def __init__(self, spec: DesignSpec, surrogate: EnsembleSurrogate,
-                 pop=96, generations=80, kappa=1.0, seed=SEED):
+    def __init__(self, spec: DesignSpec, surrogate: EnsembleSurrogate | None,
+                 pop=96, generations=80, kappa=1.0, seed=SEED,
+                 use_surrogate: bool = True):
         self.spec, self.sur = spec, surrogate
         self.pop, self.gens, self.kappa = pop, generations, kappa
         self.rng = np.random.default_rng(seed)
+        #: Con fidelidad L0 el surrogate NO aporta nada: `_eval_pop` ya
+        #: evalúa el meanline exacto de cada individuo (lo necesita para
+        #: g, stage_table y AN²), y `physics_features` mete L0_logPR y
+        #: L0_eta como ENTRADAS de la red — el ensemble aprende a copiar
+        #: una de sus columnas (R² ≈ 0.99 trivial). El residual solo
+        #: existe cuando hay L1 o pares CFD en el lazo. Con L0 se
+        #: cortocircuita: se usa el record y se ahorra la red entera.
+        self.use_surrogate = bool(use_surrogate and surrogate is not None)
 
     # -- evaluación barata de una población (solo surrogate + L0 features) -
     def _eval_pop(self, U):
@@ -388,9 +428,14 @@ class NSGA2:
         recs0 = [evaluate(t, fidelity=Fidelity.L0, use_cache=False,
                           calibrate=False)
                  for t in thetas]
-        X = np.array([physics_features(t, rec)
-                      for t, rec in zip(thetas, recs0)])
-        mu, sd = self.sur.predict(X)
+        if self.use_surrogate:
+            X = np.array([physics_features(t, rec)
+                          for t, rec in zip(thetas, recs0)])
+            mu, sd = self.sur.predict(X)
+        else:
+            mu = np.array([[r["PR"], r["eta_poly"], r["U2"], r["Mu"],
+                            r["power_W"]] for r in recs0])
+            sd = np.zeros_like(mu)
         F = np.empty((len(U), 2))
         V = np.empty(len(U))
         Sig = np.empty(len(U))
@@ -510,6 +555,9 @@ class AutonomousAxialDesigner:
         self.seed = int(seed)
         self.rng = np.random.default_rng(self.seed)
         self.sur = EnsembleSurrogate(K=5, seed=self.seed)
+        #: el residual del ensemble solo existe con L1/L2 en el lazo
+        #: (ver NSGA2.use_surrogate). Con L0 puro se salta la red.
+        self.use_surrogate = int(fidelity) >= int(Fidelity.L1)
         self.X: list[np.ndarray] = []     # features
         self.recs: list[dict] = []        # records físicos
         self.history: list[dict] = []
@@ -555,7 +603,8 @@ class AutonomousAxialDesigner:
     def _eval_and_store(self, thetas: np.ndarray) -> list[dict]:
         thetas = np.array([self.spec.fix_operating_point(t) for t in thetas])
         recs = evaluate_batch(thetas, fidelity=self.fidelity,
-                              n_workers=self.n_workers)
+                              n_workers=self.n_workers,
+                              with_surge_margin=True)
         for t, r in zip(thetas, recs):
             self.X.append(physics_features(t))
             r["_theta"] = t.tolist()
@@ -572,6 +621,10 @@ class AutonomousAxialDesigner:
         return s
 
     def _train(self):
+        if not self.use_surrogate:
+            self.log("[surrogate] fidelidad L0: sin residual que aprender "
+                     "— NSGA-II corre sobre el meanline exacto.")
+            return True
         X = np.array(self.X)
         Y = EnsembleSurrogate._targets(self.recs)
         self.log(f"[surrogate] training ensemble on {len(X)} samples...")
@@ -625,7 +678,8 @@ class AutonomousAxialDesigner:
 
             self.log("[2/4] Constrained NSGA-II over surrogate...")
             ga = NSGA2(self.spec, self.sur, pop=96, generations=60,
-                       seed=self.seed + rd)
+                       seed=self.seed + rd,
+                       use_surrogate=self.use_surrogate)
             result = ga.run()
             n_feas = int(np.sum(result["V"][result["pareto_idx"]] <= 1e-9))
             self.log(f"      Predicted front: {len(result['pareto_idx'])} "
@@ -749,7 +803,8 @@ def evaluate_design(spec: DesignSpec, theta_design,
             f"{NDIM_LEGACY} (θ legacy completo) o {NDIM} (θ completo) — "
             f"llegaron {n}")
     theta = spec.fix_operating_point(theta)
-    rec = evaluate(theta, fidelity=fidelity, per_stage=per_stage)
+    rec = evaluate(theta, fidelity=fidelity, per_stage=per_stage,
+                   with_surge_margin=True)
     rec["_theta"] = theta.tolist()
     fit = scalar_fitness(spec, rec, theta)
     feasible = bool(spec.violation(spec.constraints(rec, theta)) <= 1e-9)

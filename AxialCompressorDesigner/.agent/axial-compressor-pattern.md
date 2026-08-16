@@ -54,8 +54,13 @@ PRIMER y ÚLTIMO anillo respectivamente, como cualquier estátor.
 
 ## Contrato
 
-Todo llega por `axial_compressor.json` (schema phyac-axial-1, ver
-geometry_generator.py). El C# es deliberadamente "tonto": no hay
+Todo llega por `axial_compressor.json` (schema phyac-axial-2, ver
+contract_schema.py y schemas/phyac-axial-2.schema.json). El entero final
+del identificador es la versión MAYOR: `PhyACImport.nSCHEMA_MAJOR` la
+comprueba y RECHAZA lo que no entienda en vez de leerlo a medias
+rellenando defaults. Al cambiar el contrato hay que subir las dos
+constantes a la vez — la suite comprueba que coinciden.
+El C# es deliberadamente "tonto": no hay
 matemática de perfiles ni correlaciones aquí — solo transformar, coser,
 voxelizar y exportar `<Name>_Rotor.stl`, `<Name>_Casing.stl` y el
 ensamble.

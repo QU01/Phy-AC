@@ -1,11 +1,20 @@
 # CI de Quasar Phy-AC
 #
-# python : verificación (test_phyac.py) + validación
-#          (validate.py --strict: PR/η vs máquinas NASA, anclas de regresión)
-#          en Linux y Windows.
-# dotnet : compila la capa 5c (AxialCompressorDesigner). El smoke
-#          axial_compressor.json → STL corre localmente (PicoGK necesita su
-#          runtime nativo x64); si el runner lo soporta, promoverlo a paso de CI.
+# verify  : verificación (test_phyac.py) + validación (validate.py --strict:
+#           PR/η vs máquinas NASA, anclas de regresión) en Linux y Windows,
+#           con las dependencias del núcleo FIJADAS.
+# full    : el mismo repo con los extras `step` (CadQuery) y `l1`
+#           (turbo-design) instalados, la suite en modo EXIGENTE — sin
+#           saltarse nada por dependencia ausente —, el CLI de punta a
+#           punta y el chequeo de interferencias del ensamble.
+#           Es el job que cubre todo lo que la geometría detallada y la
+#           fidelidad L1 añadieron y que antes no se probaba en CI: sin él
+#           los tests de CAD se saltan solos y el job pasa en verde sin
+#           haber comprobado nada.
+# dotnet  : compila la capa 5c (AxialCompressorDesigner). El smoke
+#           axial_compressor.json → STL corre localmente (PicoGK necesita
+#           su runtime nativo x64); si el runner lo soporta, promoverlo a
+#           paso de CI.
 name: CI
 
 on:
@@ -13,7 +22,7 @@ on:
   pull_request:
 
 jobs:
-  python:
+  verify:
     strategy:
       fail-fast: false
       matrix:
@@ -24,8 +33,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install
-        run: pip install numpy matplotlib
+      - name: Install (pinned core)
+        run: pip install numpy==2.4.6 matplotlib==3.11.0
       - name: Verification suite
         run: python test_phyac.py
       - name: Validation campaign (strict)
@@ -34,6 +43,90 @@ jobs:
         run: |
           pip install build
           python -m build --sdist --wheel
+
+  full:
+    # Tolerante a fallo MIENTRAS se estabiliza: la ausencia de ruedas de
+    # CadQuery/turbo-design para una versión de Python del runner no debe
+    # bloquear un PR de física. Quitar `continue-on-error` en cuanto el
+    # job encadene verdes — es el único que cubre CAD, L1 y CLI.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (pinned, all extras)
+        run: pip install -r requirements-ci.txt
+
+      - name: Dependencies actually import
+        run: |
+          python -c "import cadquery; print('cadquery', cadquery.__version__)"
+          python -c "import physics_core as pc; ok = pc._try_load_turbodesign(); print('turbo-design', ok, pc._TD_REASON); raise SystemExit(0 if ok else 1)"
+
+      # PHYAC_REQUIRE_* convierte en FALLO lo que en local es un SKIP: sin
+      # esto un runner sin CadQuery pasaría la suite entera en verde sin
+      # haber tocado la geometría detallada.
+      - name: Verification suite (CAD and L1 REQUIRED)
+        env:
+          PHYAC_REQUIRE_STEP: "1"
+          PHYAC_REQUIRE_L1: "1"
+        run: python test_phyac.py
+
+      - name: Contract schema — self-check
+        run: |
+          python -c "import contract_schema as cs; s = cs.load_schema(); assert s['properties']['schema']['const'] == cs.SCHEMA_ID; print('schema', cs.SCHEMA_ID, 'ok')"
+
+      # n_stages fijado a 3: el STEP detallado de una máquina de 7 etapas
+      # pasa de 300 MB y su chequeo de interferencias se va a decenas de
+      # minutos. Lo que este paso comprueba es que el CAMINO completo
+      # funciona, no el tamaño de la máquina.
+      - name: CLI smoke — deliverables end to end
+        run: |
+          python phyac_cli.py --pr 3.0 --mdot 20 --quick --fidelity L0 \
+            --fix n_stages=3 --no-figures --no-color --outdir runs/ci \
+            --step --step-mode detailed --check-interference
+
+      - name: Deliverables exist and are not empty
+        run: |
+          python - <<'PY'
+          import os, sys, json, contract_schema as cs
+          need = [
+              "runs/ci/report.html",
+              "runs/ci/phyac_run.json",
+              "runs/ci/geometry/axial_compressor.json",
+              "runs/ci/geometry/annulus.csv",
+              "runs/ci/geometry/stage_summary.csv",
+              "runs/ci/geometry/bom.csv",
+              "runs/ci/geometry/machine_detailed.step",
+          ]
+          bad = [p for p in need
+                 if not os.path.exists(p) or os.path.getsize(p) == 0]
+          if bad:
+              print("MISSING OR EMPTY:", *bad, sep="\n  ")
+              sys.exit(1)
+          with open(need[2], encoding="utf-8") as f:
+              contract = json.load(f)
+          errs = cs.validate(contract)
+          if errs:
+              print(f"contract violates {cs.SCHEMA_ID}:", *errs, sep="\n  ")
+              sys.exit(1)
+          size = os.path.getsize("runs/ci/geometry/machine_detailed.step")
+          print(f"OK — {len(need)} deliverables, "
+                f"STEP {size / 1e6:.1f} MB, contract valid")
+          PY
+
+      # El STEP detallado se queda fuera del artefacto a propósito: es de
+      # cientos de MB y lo que interesa conservar de una corrida de CI es
+      # el reporte, el contrato y los CSV.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phyac-ci-deliverables
+          path: |
+            runs/ci
+            !runs/ci/geometry/*.step
+          retention-days: 7
 
   dotnet:
     runs-on: windows-latest

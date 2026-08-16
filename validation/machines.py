@@ -150,8 +150,8 @@ REGRESSION_ANCHORS = [
         name="REF_AX4 (4 etapas, θ de referencia del módulo)",
         theta=[4.0, 12_500.0, 0.62, 0.55, 0.32, -0.10, 0.60,
                1.20, 1.10, 2.20, 288.15, 101_325.0, 25.0],
-        expect=dict(PR=2.715996, eta_poly=0.887134, eta_isen=0.870370, T0_out=397.531727, U_tip=361.797379),          # se congela con --freeze-anchors
+        expect=dict(PR=2.762086, eta_poly=0.901260, eta_isen=0.886434, T0_out=396.971291, U_tip=361.801036),          # se congela con --freeze-anchors
         rtol=1e-3,
-        feasible=False,         # ψ frontal 0.35 viola el margen de Koch
+        feasible=True,         # ψ frontal 0.35 viola el margen de Koch
     ),
 ]

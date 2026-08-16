@@ -164,11 +164,16 @@ frente de Pareto, tabla por etapa, carta de Smith, desglose de pérdidas,
 triángulos, annulus, márgenes estructurales, BCs de CFD y trazabilidad —
 más la sección matplotlib si está instalado; se omite con
 `--no-figures`), `figures/`, `geometry/` (`axial_compressor.json` — el
-contrato schema `phyac-axial-1` que consume la capa 5c —, `annulus.csv`,
+contrato schema `phyac-axial-2` que consume la capa 5c —, `annulus.csv`,
 `stage_summary.csv`, `bom.csv`, con `--step` el STEP de re-CAD de la
 máquina — `parts/*.step` por pieza física con un álabe de muestra +
-conteos en `parts/README.txt`, o ensamble nombrado con
-`--step-mode assembly` —, `blade_stage0.step` si CadQuery está
+conteos en `parts/README.txt`, ensamble nombrado con
+`--step-mode assembly`, la máquina jerárquica con las piezas reales
+separadas con `--step-mode detailed`, o cada corona patronada con
+`--step-mode full`; con `--check-interference` se comprueba por
+booleanas y por pares la máquina ya montada — imprime el par culpable y
+el volumen compartido y sale con código 3 si algo se solapa —,
+`blade_stage0.step` si CadQuery está
 disponible), `dataset.csv` (flywheel de datos), `phyac_run.json`
 (checkpoint trazable), `phys_cache.jsonl` (caché persistente de
 evaluaciones L1), `map.csv` con `--map`.
@@ -191,7 +196,8 @@ Salidas de la fase C#: un STL por pieza más las vistas de unión
 | `AxialCompressorDesigner/` | 5c | Librería C# + PicoGK: importa `axial_compressor.json` (`PhyACImport`) y construye eje, discos-álabe y anillos de carcasa como STL imprimibles. |
 | `AxialCompressorDesigner.Example/` | 5c | Ejecutable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | producto | CLI end-to-end: espec → diseño → geometría → informe → dataset [→ STLs vía --stl/--voxel]. |
-| `test_phyac.py` | VV&UQ | Suite de verificación: 80 checks (triángulos, conservación, continuidad de g, perfiles, contrato, solver de disco, núcleo del optimizador, regresión de solapes). |
+| `contract_schema.py` | 5a | JSON Schema publicado de `phyac-axial-2` + validador sin dependencias (también CLI: `python contract_schema.py <contrato>`). |
+| `test_phyac.py` | VV&UQ | Suite de verificación: 149 checks (triángulos, conservación, continuidad de g, perfiles, esquema del contrato, solver de disco, núcleo del optimizador, spool L1, interferencias del ensamble). |
 | `validation/` | VV&UQ | Campaña de validación vs NASA Stage 35, Rotor 37/67 y GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## API Python (capas 1–5b)
@@ -293,10 +299,16 @@ Licencias de terceros: ver [README.md](README.md#third-party-licenses).
 ## Verificación y validación
 
 ```bash
-python test_phyac.py               # verificación: 80 checks
+python test_phyac.py               # verificación: 149 checks
 python validation/validate.py      # validación: máquinas NASA → RESULTS.md
 python data_pipeline.py            # anclas de datos: rebuild + SHA-256
+python contract_schema.py runs/x/geometry/axial_compressor.json   # contrato
 ```
+
+Con los extras instalados, `PHYAC_REQUIRE_STEP=1` y `PHYAC_REQUIRE_L1=1`
+convierten en FALLO lo que si no sería un salto silencioso — es como lo
+corre el CI, para que un runner sin CadQuery no pase en verde sin haber
+comprobado la geometría.
 
 **Verificación** (¿resolvemos bien las ecuaciones?): identidades de
 triángulos, conservación de Euler/entalpía, límite isentrópico,
@@ -313,10 +325,10 @@ predicción de pérdidas → (η, PR). Tabla vigente en
 
 | Máquina | ΔPR | Δη |
 |---|---|---|
-| NASA Stage 35 (etapa transónica) | +0.8% | +1.2 pts |
-| NASA Rotor 37 (rotor transónico) | −1.1% | −1.5 pts |
-| NASA Rotor 67 (fan transónico) | −0.7% | −1.4 pts |
-| GE/NASA E³ HPC (10 etapas) | −4.8% | −1.4 pts |
+| NASA Stage 35 (etapa transónica) | +1.2% | +1.7 pts |
+| NASA Rotor 37 (rotor transónico) | −1.2% | −1.6 pts |
+| NASA Rotor 67 (fan transónico) | −1.2% | −2.5 pts |
+| GE/NASA E³ HPC (10 etapas) | −5.6% | −1.6 pts |
 
 ## Estado actual y límites declarados (v0.1)
 
@@ -344,6 +356,69 @@ predicción de pérdidas → (η, PR). Tabla vigente en
   imprimir las piezas.
 
 ## Historia
+
+- **2026-08-16 — contrato versionado, chequeo de interferencias del
+  ensamble y un CI que los cubre (fase 10)**: tres cosas que existían
+  sobre el papel y que ninguna máquina comprobaba. (a) **El contrato se
+  versiona**: `phyac-axial-2` con JSON Schema publicado
+  (`schemas/phyac-axial-2.schema.json`), un validador sin dependencias
+  (`contract_schema.py`, también CLI) ejercitado contra seis contratos
+  rotos a propósito, y un lector de la capa 5c que **rechaza** una
+  versión mayor que no conoce en vez de rellenar los huecos con defaults.
+  La fase 9 había añadido abeto, tirantes, `vortex_n`, `bleed` y
+  `sm_flow` conservando la etiqueta `phyac-axial-1`: un consumidor v1 no
+  tenía forma de enterarse. (b) **Chequeo de interferencias del
+  ensamble** (`--check-interference`, código de salida 3): booleana por
+  pares sobre la máquina montada, reportando el par culpable y el volumen
+  compartido. Encontró de inmediato tres defectos que el test por
+  vértices sobre filas sueltas no podía ver — cascos de tambor
+  atravesando de lado a lado el rim de los discos (53 cm³ cada uno),
+  tirantes cruzando el alma de los discos delanteros porque cada disco
+  calculaba su propio círculo de taladros, y rims de disco metidos dentro
+  del álabe porque el rim era un cilindro mientras la línea de cubo sube.
+  Los tres corregidos; el ensamble queda limpio con tolerancia de 1 mm³.
+  (c) **El CI cubre por fin lo que cambió**: dependencias fijadas, un job
+  con los extras `step` y `l1` donde `PHYAC_REQUIRE_STEP`/`_L1`
+  convierten la ausencia de una dependencia opcional en FALLO en vez de
+  en un salto silencioso, y un smoke del CLI de punta a punta que valida
+  el contrato emitido. Ese job destapó que L1 llevaba muerto en
+  silencio: `turbo-design` no declara `requests`, y `_scm_solve` lanzaba
+  su worker con multiprocessing, que en Windows reimporta el `__main__`
+  del que llama — así que cualquier script sin guard agotaba el timeout y
+  degradaba a L0 sin decir nada. Ambos arreglados. Verificación 112 → 149
+  checks.
+
+- **2026-08-16 — física del rango y gas real (fase 9)**: la contabilidad
+  de pérdidas se rehízo sobre mecanismo citado en vez de constantes
+  ajustadas. (a) **Gas caloríficamente imperfecto**: cp(T), γ(T) y
+  rendimientos EXACTOS para gas imperfecto vía la función de entropía
+  phi(T) = ∫cp/T dT. (b) **Pérdidas por ENTROPÍA** (Dixon & Hall §5.5,
+  ec. 5.4–5.9): la etapa se marcha con las presiones totales reales y el
+  equivalente en trabajo de una pérdida es T₀₃·Δs — el viejo ω̄·½W₁²
+  subestimaba las etapas traseras calientes un 15–25% cada una; además ω̄
+  se refiere ya a la cabeza dinámica COMPRESIBLE (P₀−p), la definición de
+  Koch & Smith. (c) **Correlación de stall de Koch 1981** en lugar de la
+  constante `CH_STALL_MAX`: Ch_ef,stall desde el parámetro de difusión
+  L/g₂ de la cascada con correcciones de Reynolds, holgura y espaciado
+  axial, y con el factor de cabeza dinámica efectiva 𝔉_ef. (d) **Endwall
+  de Koch & Smith 1976**: el bloqueo del annulus EMERGE de la carga
+  (2δ*/g ∝ x³ + 2(ε/g)x) y trae su propio débito de rendimiento,
+  jubilando el arrastre de annulus de Howell y el apaño `K_ENDWALL = 1.4`.
+  **El mapa pasa a ser una herramienta**: el choke limita el gasto (las
+  speedlines se hacen verticales en vez de desplomarse por debajo de
+  PR = 1), la línea de trabajo de Dixon (ec. 5.26b) aporta el denominador
+  que le faltaba a "margen de bombeo", y el margen en gasto es
+  **restricción dura** (`SM_FLOW_MIN = 15%`). Además: el **sangrado**
+  existe en la física (no solo como agujero en la carcasa) y el puerto se
+  coloca detrás de la etapa que stallea primero; el **IGV** por fin paga
+  su pérdida y su longitud; la **reacción de raíz** es la 9ª restricción
+  dura; el surrogate se cortocircuita en fidelidad L0 (estaba aprendiendo
+  a copiar una de sus propias entradas); se reporta la solidez fabricada
+  frente a la optimizada; y los álabes de rotor reciben **raíz de abeto**
+  con su ranura brochada en el disco por la vía STEP (el último punto
+  donde turbodesigner iba por delante). Verificación 80 → 112 checks; las
+  cuatro máquinas NASA siguen PASS con tres constantes libres menos
+  (docs/VALIDATION.md §3).
 
 - **2026-07-17 — STEP de ensamble (fase 8.2)**: `--step` exporta STEP
   de re-CAD en coordenadas de máquina (eje/hub/carcasa de revolución

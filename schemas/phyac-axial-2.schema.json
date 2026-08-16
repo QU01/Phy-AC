@@ -1,0 +1,328 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quasar-solutions.lab/phyac/schemas/phyac-axial-2.schema.json",
+  "title": "Quasar Phy-AC — contrato de compresor axial, versión 2",
+  "description": "Frontera entre la capa 5a (geometry_generator.py) y cualquier consumidor: la capa 5c (C#/PicoGK), la vía CadQuery y los integradores externos. La versión 2 añade sobre la 1: retención de abeto (assembly.firtree), tirantes de disco (tie_bolt_*), exponente de vórtice y modelo de gas (derived.vortex_n, derived.gas_model), sangrado por etapa (derived.bleed), pérdida de IGV (derived.igv_loss), margen de bombeo en caudal (derived.sm_flow) y la etapa que entra en pérdida primero (derived.stage_stall_first). Las filas IGV/OGV pasan a ser nulables: una máquina sin pre-swirl NO lleva IGV.",
+  "type": "object",
+  "required": [
+    "schema",
+    "design_vector",
+    "derived",
+    "annulus",
+    "stages",
+    "assembly",
+    "structural",
+    "cfx_boundary_conditions",
+    "run_meta"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema": {
+      "const": "phyac-axial-2",
+      "description": "Identificador de esquema. El entero final es la versión MAYOR: un consumidor debe rechazar lo que no entienda en vez de leerlo a medias."
+    },
+
+    "design_vector": {
+      "description": "Componentes de θ tal y como las nombra physics_core.VAR_NAMES. Las 13 primeras (θ legado) son obligatorias; `phi_slope` y `Rx_slope` (fase 8, θ 15-D) aparecen solo si el diseño se optimizó con ellas.",
+      "type": "object",
+      "required": ["n_stages", "RPM", "HTR_in", "phi1", "psi_mid",
+                   "psi_slope", "Rx_mean", "sigma_r", "sigma_s", "AR",
+                   "T0_in", "P0_in", "massflow"],
+      "additionalProperties": false,
+      "properties": {
+        "n_stages": {"type": "number", "minimum": 1},
+        "RPM":      {"type": "number", "exclusiveMinimum": 0},
+        "HTR_in":   {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "phi1":     {"type": "number", "exclusiveMinimum": 0},
+        "psi_mid":  {"type": "number", "exclusiveMinimum": 0},
+        "psi_slope": {"type": "number"},
+        "Rx_mean":  {"type": "number", "minimum": 0, "maximum": 1},
+        "sigma_r":  {"type": "number", "exclusiveMinimum": 0},
+        "sigma_s":  {"type": "number", "exclusiveMinimum": 0},
+        "AR":       {"type": "number", "exclusiveMinimum": 0},
+        "T0_in":    {"type": "number", "exclusiveMinimum": 0},
+        "P0_in":    {"type": "number", "exclusiveMinimum": 0},
+        "massflow": {"type": "number", "exclusiveMinimum": 0},
+        "phi_slope": {"type": "number"},
+        "Rx_slope":  {"type": "number"}
+      }
+    },
+
+    "derived": {
+      "description": "Resultado verificado del meanline. Todo lo marcado como «v2» no existía en phyac-axial-1.",
+      "type": "object",
+      "required": ["PR", "eta_poly", "eta_isen", "power_W", "U_tip_m_s",
+                   "AN2_m2_rpm2", "length_mm", "n_stages", "r_tip_in_mm",
+                   "M_rel_tip1", "min_SM", "feasible", "gas_model",
+                   "vortex_n", "stage_stall_first", "ds_machine_J_kgK",
+                   "blockage_exit", "bleed", "source"],
+      "additionalProperties": true,
+      "properties": {
+        "PR":          {"type": "number", "exclusiveMinimum": 0},
+        "eta_poly":    {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "eta_isen":    {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "power_W":     {"type": "number"},
+        "U_tip_m_s":   {"type": "number", "exclusiveMinimum": 0},
+        "AN2_m2_rpm2": {"type": "number", "minimum": 0},
+        "length_mm":   {"type": "number", "exclusiveMinimum": 0},
+        "n_stages":    {"type": "integer", "minimum": 1},
+        "r_tip_in_mm": {"type": "number", "exclusiveMinimum": 0},
+        "M_rel_tip1":  {"type": "number", "minimum": 0},
+        "min_SM":      {"type": "number"},
+        "feasible":    {"type": "boolean"},
+
+        "gas_model": {
+          "description": "v2 · «variable_cp» (cp(T), γ(T), h(T), φ(T)) o «frozen_cp».",
+          "type": "string",
+          "enum": ["variable_cp", "frozen_cp"]
+        },
+        "vortex_n": {
+          "description": "v2 · exponente del vórtice controlado, Cu ∝ r^n. −1 = vórtice libre.",
+          "type": "number"
+        },
+        "stage_stall_first": {
+          "description": "v2 · índice 0-based de la etapa que agota antes su capacidad de subida de presión de Koch. Determina dónde va el puerto de sangrado.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "ds_machine_J_kgK": {
+          "description": "v2 · producción de entropía de toda la máquina (Dixon & Hall §5.5).",
+          "type": "number",
+          "minimum": 0
+        },
+        "blockage_exit": {
+          "description": "v2 · bloqueo de annulus a la salida por capa límite de pared (Koch & Smith 1976).",
+          "type": "number", "minimum": 0, "maximum": 1
+        },
+        "sm_flow": {
+          "description": "v2 · margen de bombeo en CAUDAL sobre la línea de trabajo. Nulo si el record se evaluó sin mapa.",
+          "type": ["number", "null"]
+        },
+        "sm_koch_wl": {
+          "description": "v2 · margen de Koch en el punto de la línea de trabajo. Nulo si no se evaluó.",
+          "type": ["number", "null"]
+        },
+        "bleed": {
+          "description": "v2 · sangrado por etapa.",
+          "type": "object",
+          "required": ["per_stage", "total_frac", "mdot_exit_kgs"],
+          "additionalProperties": true,
+          "properties": {
+            "per_stage": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1}},
+            "total_frac": {"type": "number", "minimum": 0, "maximum": 1},
+            "mdot_exit_kgs": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        "igv_loss": {
+          "description": "v2 · pérdida y longitud reales del IGV. `present: false` cuando la máquina no lo lleva.",
+          "type": ["object", "null"],
+          "required": ["present"],
+          "additionalProperties": true,
+          "properties": {
+            "present": {"type": "boolean"},
+            "omega_bar": {"type": "number", "minimum": 0},
+            "dP0_Pa": {"type": "number"},
+            "length_mm": {"type": "number", "minimum": 0},
+            "ds_J_kgK": {"type": "number", "minimum": 0},
+            "alpha_out_deg": {"type": "number"}
+          }
+        },
+        "source": {"type": "string"}
+      }
+    },
+
+    "annulus": {
+      "description": "Polilíneas meridionales (z_mm, r_mm) de cubo y punta, y la holgura de punta con la que se talló la geometría.",
+      "type": "object",
+      "required": ["hub", "tip", "tip_clearance_mm"],
+      "additionalProperties": false,
+      "properties": {
+        "hub": {"$ref": "#/$defs/polyline"},
+        "tip": {"$ref": "#/$defs/polyline"},
+        "tip_clearance_mm": {"type": "number", "minimum": 0}
+      }
+    },
+
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["index", "rotor", "stator"],
+        "additionalProperties": true,
+        "properties": {
+          "index": {"type": "integer", "minimum": 0},
+          "rotor": {"$ref": "#/$defs/row"},
+          "stator": {"$ref": "#/$defs/row"}
+        }
+      }
+    },
+
+    "igv": {
+      "description": "v2 · NULO cuando α₁ = 0 exacto: una máquina sin pre-swirl no lleva IGV y el consumidor no debe fabricar uno.",
+      "oneOf": [{"$ref": "#/$defs/row"}, {"type": "null"}]
+    },
+    "ogv": {
+      "oneOf": [{"$ref": "#/$defs/row"}, {"type": "null"}]
+    },
+
+    "assembly": {
+      "description": "Parámetros del ensamble mecánico. Un consumidor puede aplicar defaults a lo opcional, pero NO a `firtree` si `enabled` es verdadero.",
+      "type": "object",
+      "required": ["shaft_stub_mm", "shaft_bore_frac", "hub_wall_mm",
+                   "disk_web_frac", "disk_web_min_mm", "disk_web_max_mm",
+                   "flange_bolt_count", "flange_bolt_d_mm", "flange_w_mm",
+                   "flange_t_mm", "tie_bolt_count", "tie_bolt_d_mm",
+                   "blade_fillet_r_mm", "bleed_stage", "bleed_hole_d_mm",
+                   "bleed_boss_d_mm", "bleed_boss_h_mm", "firtree"],
+      "additionalProperties": true,
+      "properties": {
+        "shaft_stub_mm":     {"type": "number", "minimum": 0},
+        "shaft_bore_frac":   {"type": "number", "minimum": 0, "exclusiveMaximum": 1},
+        "hub_wall_mm":       {"type": "number", "exclusiveMinimum": 0},
+        "disk_web_frac":     {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "disk_web_min_mm":   {"type": "number", "exclusiveMinimum": 0},
+        "disk_web_max_mm":   {"type": "number", "exclusiveMinimum": 0},
+        "flange_bolt_count": {"type": "integer", "minimum": 0},
+        "flange_bolt_d_mm":  {"type": "number", "exclusiveMinimum": 0},
+        "flange_w_mm":       {"type": "number", "exclusiveMinimum": 0},
+        "flange_t_mm":       {"type": "number", "exclusiveMinimum": 0},
+        "tie_bolt_count": {
+          "description": "v2 · tirantes que cosen los discos entre sí.",
+          "type": "integer", "minimum": 0
+        },
+        "tie_bolt_d_mm": {
+          "description": "v2 · diámetro de tirante.",
+          "type": "number", "exclusiveMinimum": 0
+        },
+        "rim_relief_mm": {
+          "description": "Opcional (default 0.10). Rebaje del rim del disco respecto a la plataforma del álabe: en un disco real la vena la forma la plataforma y el rim se queda por debajo.",
+          "type": "number", "minimum": 0
+        },
+        "blade_fillet_r_mm": {"type": "number", "minimum": 0},
+        "bleed_stage": {
+          "description": "v2 · 1-based. Ya NO es «la de en medio»: la elige la física (stage_stall_first + 2).",
+          "type": "integer", "minimum": 1
+        },
+        "bleed_hole_d_mm": {"type": "number", "exclusiveMinimum": 0},
+        "bleed_boss_d_mm": {"type": "number", "exclusiveMinimum": 0},
+        "bleed_boss_h_mm": {"type": "number", "exclusiveMinimum": 0},
+        "firtree": {
+          "description": "v2 · retención de abeto del álabe en el disco. Perfil paramétrico compartido por la vía CadQuery y la capa 5c.",
+          "type": "object",
+          "required": ["enabled", "n_teeth", "w_top_mm", "depth_mm",
+                       "taper_deg", "lobe_frac", "clearance_mm",
+                       "axial_frac", "min_width_mm"],
+          "additionalProperties": true,
+          "properties": {
+            "enabled":       {"type": "boolean"},
+            "n_teeth":       {"type": "integer", "minimum": 1},
+            "w_top_mm":      {"type": "number", "exclusiveMinimum": 0},
+            "depth_mm":      {"type": "number", "exclusiveMinimum": 0},
+            "taper_deg":     {"type": "number", "minimum": 0, "maximum": 45},
+            "lobe_frac":     {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5},
+            "clearance_mm":  {"type": "number", "minimum": 0},
+            "axial_frac":    {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+            "min_width_mm":  {"type": "number", "exclusiveMinimum": 0}
+          }
+        }
+      }
+    },
+
+    "structural": {
+      "description": "Vacío cuando el record se generó sin capa 4. Si está poblado, todos sus campos son obligatorios.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "material":         {"type": "string"},
+        "sigma_vm_max_MPa": {"type": "number", "minimum": 0},
+        "burst_margin":     {"type": "number"},
+        "AN2_in2rpm2":      {"type": "number", "minimum": 0},
+        "rotor_mass_kg":    {"type": "number", "minimum": 0},
+        "drum_inner_r_mm":  {"type": "number", "exclusiveMinimum": 0},
+        "feasible_struct":  {"type": "boolean"}
+      }
+    },
+
+    "cfx_boundary_conditions": {
+      "type": "object",
+      "required": ["P0_in_Pa", "T0_in_K", "mdot_kg_s", "RPM",
+                   "P0_out_Pa_est", "P_static_out_Pa_est", "T0_out_K_est",
+                   "turbulence_intensity", "interfaces"],
+      "additionalProperties": true,
+      "properties": {
+        "P0_in_Pa":             {"type": "number", "exclusiveMinimum": 0},
+        "T0_in_K":              {"type": "number", "exclusiveMinimum": 0},
+        "mdot_kg_s":            {"type": "number", "exclusiveMinimum": 0},
+        "RPM":                  {"type": "number", "exclusiveMinimum": 0},
+        "P0_out_Pa_est":        {"type": "number", "exclusiveMinimum": 0},
+        "P_static_out_Pa_est":  {"type": "number", "exclusiveMinimum": 0},
+        "T0_out_K_est":         {"type": "number", "exclusiveMinimum": 0},
+        "turbulence_intensity": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "interfaces":           {"type": "array", "items": {"type": "object"}}
+      }
+    },
+
+    "run_meta": {"type": "object", "additionalProperties": true}
+  },
+
+  "$defs": {
+    "polyline": {
+      "description": "Lista de puntos [z_mm, r_mm] ordenada por z creciente.",
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 2,
+        "items": {"type": "number"}
+      }
+    },
+
+    "row": {
+      "description": "Una fila de álabes: conteo, estaciones axiales y sus secciones spanwise.",
+      "type": "object",
+      "required": ["n_blades", "z_le_mm", "z_te_mm", "z_center_mm",
+                   "rotating", "sections"],
+      "additionalProperties": true,
+      "properties": {
+        "n_blades":    {"type": "integer", "minimum": 1},
+        "z_le_mm":     {"type": "number"},
+        "z_te_mm":     {"type": "number"},
+        "z_center_mm": {"type": "number"},
+        "rotating":    {"type": "boolean"},
+        "sections": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"$ref": "#/$defs/section"}
+        }
+      }
+    },
+
+    "section": {
+      "description": "Sección 2D a un radio dado. `points` es el contorno cerrado CCW centrado en su centroide (apilado radial por centroides); `camber_points` la línea de comba que lofta la capa 5c. Todas las secciones de una fila comparten conteo de puntos.",
+      "type": "object",
+      "required": ["span_frac", "r_mm", "chord_mm", "stagger_deg",
+                   "camber_deg", "t_max_over_c", "profile", "metal_in_deg",
+                   "metal_out_deg", "M_in", "sigma_local", "thickness_mm",
+                   "points", "camber_points"],
+      "additionalProperties": true,
+      "properties": {
+        "span_frac":     {"type": "number", "minimum": 0, "maximum": 1},
+        "r_mm":          {"type": "number", "exclusiveMinimum": 0},
+        "chord_mm":      {"type": "number", "exclusiveMinimum": 0},
+        "stagger_deg":   {"type": "number", "minimum": -90, "maximum": 90},
+        "camber_deg":    {"type": "number"},
+        "t_max_over_c":  {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5},
+        "profile":       {"type": "string", "enum": ["NACA65", "DCA"]},
+        "metal_in_deg":  {"type": "number", "minimum": -90, "maximum": 90},
+        "metal_out_deg": {"type": "number", "minimum": -90, "maximum": 90},
+        "M_in":          {"type": "number", "minimum": 0},
+        "sigma_local":   {"type": "number", "exclusiveMinimum": 0},
+        "thickness_mm":  {"type": "number", "exclusiveMinimum": 0},
+        "points":        {"$ref": "#/$defs/polyline"},
+        "camber_points": {"$ref": "#/$defs/polyline"}
+      }
+    }
+  }
+}

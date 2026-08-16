@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import sys
 import tempfile
 
@@ -32,11 +33,23 @@ import blade_profiles as bp
 import geometry_generator as gg
 import data_pipeline as dp
 import neural_optimizer as no
+import contract_schema as cx
 
 THETA_REF = np.array([4.0, 12_500.0, 0.62, 0.55, 0.30, -0.10,
                       0.60, 1.20, 1.10, 2.20, 288.15, 101_325.0, 25.0])
 
 _n_pass = _n_fail = 0
+
+# Los bloques que dependen de un extra opcional (CadQuery para todo el CAD
+# detallado, turbo-design para la fidelidad L1) se saltan solos cuando la
+# librería no está. En una máquina de desarrollo es razonable; en CI es
+# exactamente lo contrario de lo que queremos, porque un job sin CadQuery
+# pasa en verde sin haber comprobado NADA de la geometría. Con
+# PHYAC_REQUIRE_STEP=1 / PHYAC_REQUIRE_L1=1 la ausencia deja de ser un
+# SKIP y pasa a ser un FALLO. El CI los pone a 1 en el job que instala los
+# extras (ver .github/workflows/ci.yml).
+REQUIRE_STEP = os.environ.get("PHYAC_REQUIRE_STEP", "") not in ("", "0")
+REQUIRE_L1 = os.environ.get("PHYAC_REQUIRE_L1", "") not in ("", "0")
 
 
 def check(name: str, ok, detail: str = ""):
@@ -70,10 +83,15 @@ for s in rec["stage_table"]:
 check("tanβ1 + tanα1 = 1/φ en todas las etapas", ok_tri)
 
 dh_sum = sum(s["dh0"] for s in rec["stage_table"])
-dT = rec["T0_out"] - THETA_REF[10]
-check("Euler: ΣΔh0 = cp·ΔT0 (±0.1%)",
-      abs(dh_sum - pc.CP * dT) / (pc.CP * dT) < 1e-3,
-      f"{dh_sum:.0f} vs {pc.CP * dT:.0f} J/kg")
+dh_h = pc.h_air(rec["T0_out"]) - pc.h_air(THETA_REF[10])
+# Con gas caloríficamente imperfecto (fase 9) la identidad de Euler es
+# ΣΔh0 = h(T0_out) − h(T0_in), NO cp·ΔT0 con un cp de referencia.
+check("Euler: ΣΔh0 = h(T0_out) − h(T0_in) (±0.1%)",
+      abs(dh_sum - dh_h) / dh_h < 1e-3,
+      f"{dh_sum:.0f} vs {dh_h:.0f} J/kg")
+_cp_eff = dh_sum / (rec["T0_out"] - THETA_REF[10])
+check("cp efectivo por encima del de referencia (gas imperfecto)",
+      pc.CP < _cp_eff < 1.10 * pc.CP, f"{_cp_eff:.1f} vs {pc.CP:.1f} J/kgK")
 
 pr_prod = float(np.prod([s["PR"] for s in rec["stage_table"]]))
 check("PR etapas ≈ PR máquina (antes del OGV, ±2%)",
@@ -81,10 +99,15 @@ check("PR etapas ≈ PR máquina (antes del OGV, ±2%)",
       f"{pr_prod:.3f} vs {rec['PR']:.3f}")
 
 # límite sin pérdidas → η→1
-_k = (pc.K_PROFILE, pc.K_ENDWALL, pc.K_SHOCK, pc.K_TIP_CLEARANCE)
+# EW_A = 0 apaga también el débito de pared de Koch & Smith (fase 9):
+# sin él la etapa nunca llega a η = 1 aunque las ω̄ sean cero.
+_k = (pc.K_PROFILE, pc.K_ENDWALL, pc.K_SHOCK, pc.K_TIP_CLEARANCE,
+      pc.EW_A, pc.TIP_CLEARANCE_MM)
 pc.K_PROFILE = pc.K_ENDWALL = pc.K_SHOCK = pc.K_TIP_CLEARANCE = 0.0
+pc.EW_A = pc.TIP_CLEARANCE_MM = 0.0
 rec_is = pc._meanline(THETA_REF)
-pc.K_PROFILE, pc.K_ENDWALL, pc.K_SHOCK, pc.K_TIP_CLEARANCE = _k
+(pc.K_PROFILE, pc.K_ENDWALL, pc.K_SHOCK, pc.K_TIP_CLEARANCE,
+ pc.EW_A, pc.TIP_CLEARANCE_MM) = _k
 check("límite isentrópico: η ≥ 0.995 sin pérdidas (pre-OGV η_tt)",
       all(s["eta_tt"] >= 0.995 for s in rec_is["stage_table"]),
       f"η_poly máquina {rec_is['eta_poly']:.4f}")
@@ -259,7 +282,7 @@ check("desviación positiva y < 15°", 0 < ma["deviation_deg"] < 15)
 # ==========================================================================
 print("— T7 · contrato de geometría (capa 5a → 5c)")
 contract = gg.build_contract(THETA_REF, rec, None, None)
-check("schema phyac-axial-1", contract["schema"] == "phyac-axial-1")
+check("schema phyac-axial-2", contract["schema"] == "phyac-axial-2")
 ok_pts = ok_cam = ok_fv = True
 for st in contract["stages"]:
     for kind in ("rotor", "stator"):
@@ -376,12 +399,12 @@ check("EnsembleSurrogate: R²(PR) > 0.9 en función suave",
 
 spec = no.DesignSpec(PR_target=4.0, massflow=25.0, material=None)
 g_all = spec.constraints(rec, THETA_REF)
-check("constraints: aero(8) + espec(4) sin material",
-      len(g_all) == pc.N_CONSTRAINTS + 4, f"{len(g_all)}")
+check("constraints: aero(9) + espec(5) sin material",
+      len(g_all) == pc.N_CONSTRAINTS + 5, f"{len(g_all)}")
 spec_m = no.DesignSpec(PR_target=4.0, massflow=25.0)
 g_m = spec_m.constraints(rec, THETA_REF)
 check("constraints: + g_struct(5) con material",
-      len(g_m) == pc.N_CONSTRAINTS + 4 + sc.N_STRUCT_CONSTRAINTS)
+      len(g_m) == pc.N_CONSTRAINTS + 5 + sc.N_STRUCT_CONSTRAINTS)
 
 with tempfile.TemporaryDirectory() as td:
     d = no.AutonomousAxialDesigner(spec, fidelity=pc.Fidelity.L0,
@@ -566,7 +589,517 @@ if _has_cq:
               and all(os.path.getsize(p) > 0 for p in _paths))
 else:
     check("export_step: cadquery no instalado — degradación silenciosa "
-          "(SKIP)", gg.export_step(contract, ".", mode="parts") == [])
+          + ("(EXIGIDO por PHYAC_REQUIRE_STEP)" if REQUIRE_STEP
+             else "(SKIP)"),
+          not REQUIRE_STEP
+          and gg.export_step(contract, ".", mode="parts") == [])
+
+# ==========================================================================
+print("— T15 · fase 9: gas real, entropía, Koch, endwall, sangrado, rango")
+
+# --- gas caloríficamente imperfecto ---------------------------------------
+check("cp(T) creciente y en banda de tablas (250-1000 K)",
+      all(pc.cp_air(T) < pc.cp_air(T + 50) for T in (250, 400, 600, 800))
+      and abs(pc.cp_air(288.15) - 1004.0) < 4.0
+      and abs(pc.cp_air(700.0) - 1075.0) < 12.0,
+      f"cp(288)={pc.cp_air(288.15):.1f}  cp(700)={pc.cp_air(700):.1f}")
+check("γ(T) cae con T y vale 1.400 en 288 K",
+      abs(pc.gamma_air(288.15) - 1.400) < 0.003
+      and pc.gamma_air(800.0) < pc.gamma_air(288.15),
+      f"γ(288)={pc.gamma_air(288.15):.4f}  γ(800)={pc.gamma_air(800):.4f}")
+_Ts = [250.0, 400.0, 650.0, 900.0]
+check("h(T) y phi(T) invierten exacto (Newton, <1e-6 K)",
+      all(abs(pc.T_from_h(pc.h_air(T), 500.0) - T) < 1e-6 for T in _Ts)
+      and all(abs(pc.T_from_phi(pc.phi_air(T), 500.0) - T) < 1e-6
+              for T in _Ts))
+_gv = pc.GAS_VARIABLE
+pc.GAS_VARIABLE = False
+check("modo gas perfecto colapsa a (CP, GAMMA) exactos",
+      pc.cp_air(900.0) == pc.CP and pc.gamma_air(900.0) == pc.GAMMA
+      and abs(pc.h_air(400.0) - pc.CP * 400.0) < 1e-9)
+pc.GAS_VARIABLE = _gv
+
+# --- Koch 1981 -------------------------------------------------------------
+check("koch_L_over_g2 crece con comba y solidez, cae con β2",
+      pc.koch_L_over_g2(30, 1.2, 35) > pc.koch_L_over_g2(10, 1.2, 35)
+      and pc.koch_L_over_g2(20, 1.5, 35) > pc.koch_L_over_g2(20, 1.0, 35)
+      and pc.koch_L_over_g2(20, 1.2, 55) > pc.koch_L_over_g2(20, 1.2, 25))
+_chs = [pc.koch_ch_stall(x) for x in (0.7, 1.0, 2.0, 3.0)]
+check("Ch_stall monótona en L/g₂ y en la banda medida de Koch",
+      all(a < b for a, b in zip(_chs, _chs[1:]))
+      and 0.25 < _chs[0] and _chs[-1] < 0.58,
+      f"Ch_stall = {[round(c, 3) for c in _chs]}")
+check("Ch_stall: Re bajo y holgura grande la degradan (Figs. 4 y 5)",
+      pc.koch_ch_stall(1.5, re_c=2e4) < pc.koch_ch_stall(1.5, re_c=5e5)
+      and pc.koch_ch_stall(1.5, eps_over_g=0.15)
+      < pc.koch_ch_stall(1.5, eps_over_g=0.01))
+check("𝔉_ef en la banda medida (0.78-1.11) para un triángulo típico",
+      0.78 <= pc.koch_f_ef(20.0, 55.0, 300.0, 260.0) <= 1.11,
+      f"{pc.koch_f_ef(20.0, 55.0, 300.0, 260.0):.3f}")
+
+# --- endwall de Koch & Smith ----------------------------------------------
+check("2δ*/g crece con la carga y con la holgura (ec. 3, Fig. 8)",
+      pc.endwall_blockage(0.95, 0.02) > pc.endwall_blockage(0.70, 0.02)
+      and pc.endwall_blockage(0.85, 0.10) > pc.endwall_blockage(0.85, 0.01)
+      and pc.endwall_blockage(0.0, 0.0) == 0.0)
+_r9 = pc.evaluate(THETA_REF, fidelity=pc.Fidelity.L0, use_cache=False)
+check("bloqueo EMERGE de la carga: KB baja y la etapa cargada bloquea más",
+      all(s["blockage_out"] < 1.0 for s in _r9["stage_table"])
+      and _r9["stage_table"][0]["blockage_out"]
+      < _r9["stage_table"][-1]["blockage_out"],
+      f"KB {_r9['stage_table'][0]['blockage_out']:.3f} → "
+      f"{_r9['stage_table'][-1]['blockage_out']:.3f}")
+check("cada etapa reporta Ch, Ch_stall, L/g₂, 𝔉_ef y ds finitos",
+      all(np.isfinite([s["Ch"], s["Ch_stall"], s["L_over_g2"], s["f_ef"],
+                       s["ds_stage_J_kgK"]]).all()
+          for s in _r9["stage_table"]))
+
+# --- entropía: coherencia marcha ↔ rendimiento -----------------------------
+_ds_sum = sum(s["ds_stage_J_kgK"] for s in _r9["stage_table"])
+check("Σds de etapas ≤ ds de máquina (IGV/OGV añaden, nunca restan)",
+      _ds_sum <= _r9["ds_machine_J_kgK"] + 1e-9,
+      f"{_ds_sum:.2f} vs {_r9['ds_machine_J_kgK']:.2f} J/kgK")
+check("η_poly coincide con R·lnPR/Δphi (definición de gas imperfecto)",
+      abs(_r9["eta_poly"] - pc.RGAS * math.log(_r9["PR"])
+          / (pc.phi_air(_r9["T0_out"]) - pc.phi_air(THETA_REF[10]))) < 1e-9)
+
+# --- IGV y sangrado --------------------------------------------------------
+check("el IGV existe en la física y paga pérdida y longitud",
+      _r9["igv"]["present"] and _r9["igv"]["dP0_Pa"] > 0.0
+      and _r9["igv"]["length_mm"] > 0.0,
+      f"ΔP0_IGV = {_r9['igv']['dP0_Pa']:.0f} Pa")
+_r_bl = pc._meanline(THETA_REF, bleed={1: 0.05})
+check("sangrado: sale menos gasto y menos potencia que sin sangrar",
+      _r_bl["bleed"]["mdot_exit_kgs"] < 0.96 * THETA_REF[12]
+      and _r_bl["power_W"] < _r9["power_W"],
+      f"ṁ_salida {_r_bl['bleed']['mdot_exit_kgs']:.2f} kg/s")
+check("sin sangrado el gasto se conserva exactamente",
+      abs(_r9["bleed"]["total_frac"]) < 1e-12)
+
+# --- solidez real vs optimizada -------------------------------------------
+check("σ real (nº entero de álabes) reportada y cercana a la de θ",
+      all(abs(s["sigma_rotor_actual"] - THETA_REF[7]) < 0.25
+          for s in _r9["stage_table"]),
+      f"σ_θ={THETA_REF[7]:.2f} σ_real="
+      f"{_r9['stage_table'][0]['sigma_rotor_actual']:.3f}")
+
+# --- rango operativo: el hallazgo que motivó la fase 9 ---------------------
+check("g tiene 9 componentes y la 9ª es la reacción de raíz",
+      len(_r9["g"]) == pc.N_CONSTRAINTS == 9
+      and abs(_r9["g"][8] - (pc.RX_HUB_MIN - _r9["Rx_hub_min"])
+              / pc.RX_HUB_MIN) < 1e-9)
+_sm = pc.surge_margin(THETA_REF, _r9)
+check("surge_margin devuelve un punto de trabajo con margen positivo",
+      _sm["ok"] and 0.0 < _sm["sm_flow"] < 1.0
+      and _sm["mdot_surge"] < _sm["mdot_wl"] <= _sm["mdot_choke"],
+      f"SM_gasto = {100 * _sm['sm_flow']:.1f}%  "
+      f"(surge {_sm['mdot_surge']:.1f} < wl {_sm['mdot_wl']:.1f} "
+      f"≤ choke {_sm['mdot_choke']:.1f} kg/s)")
+check("línea de trabajo: ṁ crece con PR y pasa por el diseño",
+      abs(pc.working_line_mdot(_r9["PR"], _r9["PR"], 25.0,
+                               _r9["eta_poly"]) - 25.0) < 1e-9
+      and pc.working_line_mdot(1.2 * _r9["PR"], _r9["PR"], 25.0, 0.9) > 25.0)
+_map9 = pc.compressor_map(THETA_REF, speed_fracs=(0.8, 1.0))
+check("el mapa tiene ANCHO real en todas las speedlines (regresión H1)",
+      all(sl["mdot_choke"] > 1.05 * sl["mdot_surge"] for sl in
+          _map9["speedlines"]),
+      "  ".join(f"N={sl['speed_frac']:.2f}:"
+                f"{100 * (sl['mdot_choke'] / sl['mdot_surge'] - 1):.0f}%"
+                for sl in _map9["speedlines"]))
+check("el choke LIMITA el gasto: ningún punto del mapa tiene PR < 1",
+      all(p["PR"] >= 1.0 for sl in _map9["speedlines"]
+          for p in sl["points"]))
+check("cada speedline trae punto de trabajo y etapa crítica",
+      all(sl["working_point"] is not None
+          and 0 <= sl["working_point"]["stage_stall_first"]
+          < len(_r9["stage_table"]) for sl in _map9["speedlines"]))
+# Los VSV solo tienen sentido en la máquina que los NECESITA: una de PR
+# bajo ya tiene margen de sobra a velocidad parcial. Se prueba en una de
+# PR ≈ 4.5 y 6 etapas, que es donde vive el problema histórico (J79).
+_TH_HI = np.array([6.0, 14_000.0, 0.55, 0.55, 0.34, -0.10, 0.62,
+                   1.25, 1.15, 2.00, 288.15, 101_325.0, 25.0])
+_hi_no = pc.compressor_map(_TH_HI, speed_fracs=(0.70, 0.85), vsv="none")
+_hi_yes = pc.compressor_map(_TH_HI, speed_fracs=(0.70, 0.85), vsv="auto")
+check("VSV: cerrar los estátores frontales corre el bombeo a menos gasto",
+      _hi_yes["speedlines"][0]["mdot_surge"]
+      < 0.95 * _hi_no["speedlines"][0]["mdot_surge"],
+      f"ṁ_surge 70%: {_hi_no['speedlines'][0]['mdot_surge']:.2f} → "
+      f"{_hi_yes['speedlines'][0]['mdot_surge']:.2f} kg/s")
+check("VSV: y con ello mejoran el margen en la línea de trabajo (85%)",
+      _hi_yes["speedlines"][1]["working_point"]["sm_flow"]
+      > _hi_no["speedlines"][1]["working_point"]["sm_flow"],
+      f"SM 85%: "
+      f"{100 * _hi_no['speedlines'][1]['working_point']['sm_flow']:.1f}% → "
+      f"{100 * _hi_yes['speedlines'][1]['working_point']['sm_flow']:.1f}%")
+check("sin VSV la máquina de PR alto se queda SIN margen al 70% "
+      "(la razón histórica de los estátores variables)",
+      _hi_no["speedlines"][0]["working_point"]["sm_flow"] < 0.05,
+      f"SM 70% sin VSV = "
+      f"{100 * _hi_no['speedlines'][0]['working_point']['sm_flow']:.1f}%")
+
+# --- retención de abeto (fase 9, paridad con turbodesigner) ----------------
+_ft = gg.firtree_profile(6.0, 18.0, n_teeth=3, taper_deg=8.0)
+_fu = [u for u, v in _ft]
+_fv = [v for u, v in _ft]
+check("firtree: contorno cerrado, simétrico y dentro de la envolvente",
+      len(_ft) >= 12 and abs(max(_fu) + min(_fu)) < 1e-9
+      and abs(max(_fu) - 3.0) < 1e-9 and abs(max(_fv) - 18.0) < 1e-9,
+      f"{len(_ft)} puntos, u ±{max(_fu):.2f} mm, v hasta {max(_fv):.1f} mm")
+_right = [(u, v) for u, v in _ft if u > 0]        # solo el flanco +u
+_ru = [u for u, v in _right]
+_w_top = _ru[0]
+_w_bot = _ru[-1]
+_necks = sum(1 for a, b, c in zip(_ru, _ru[1:], _ru[2:]) if b < a and b < c)
+check("firtree: el árbol se estrecha hacia el fondo y tiene 3 cuellos",
+      _w_bot < _w_top and _necks >= 2,
+      f"semiancho {_w_top:.2f} → {_w_bot:.2f} mm, {_necks} cuellos")
+_ft_slot = gg.firtree_profile(6.0, 18.0, clearance_mm=0.08)
+check("firtree: la ranura del disco es MAYOR que la raíz (juego de montaje)",
+      max(u for u, v in _ft_slot) > max(_fu),
+      f"ranura ±{max(u for u, v in _ft_slot):.3f} vs raíz ±{max(_fu):.3f} mm")
+check("contrato: bloque firtree presente y coherente con el álabe",
+      "firtree" in contract["assembly"]
+      and 4.0 <= contract["assembly"]["firtree"]["depth_mm"]
+      < contract["stages"][0]["rotor"]["sections"][0]["r_mm"]
+      and contract["assembly"]["firtree"]["n_teeth"] >= 2,
+      f"depth = {contract['assembly']['firtree']['depth_mm']:.1f} mm")
+check("contrato: el puerto de sangrado apunta detrás de la etapa crítica",
+      contract["assembly"]["bleed_stage"]
+      == min(max(rec["stage_stall_first"] + 2, 1), rec["n_stages"]),
+      f"bleed_stage = {contract['assembly']['bleed_stage']} "
+      f"(1ª en stall: etapa {rec['stage_stall_first'] + 1})")
+
+# ==========================================================================
+print("— T16 · fase 9.1: torbellino controlado y ensamble detallado")
+
+# --- exponente de torbellino ----------------------------------------------
+check("vórtice libre (n=−1) es exactamente r·Cu = cte y Cx constante",
+      all(abs(pc.vortex_cu(100.0, r, 1.0, -1.0) * r - 100.0) < 1e-12
+          for r in (0.6, 1.0, 1.4))
+      and all(pc.vortex_cx(150.0, 90.0, r, 1.0, -1.0) == 150.0
+              for r in (0.6, 1.0, 1.4)))
+check("vórtice forzado (n=+1) da reacción CONSTANTE en el span",
+      all(abs(pc.vortex_reaction(0.6, r, 1.0, 1.0) - 0.6) < 1e-12
+          for r in (0.5, 1.0, 1.5)))
+check("n=−1 reproduce la fórmula clásica Rx_h = 1−(1−Rx_m)(r_m/r)²",
+      abs(pc.vortex_reaction(0.6, 0.8, 1.0, -1.0)
+          - (1.0 - 0.4 / 0.8 ** 2)) < 1e-12)
+check("Cx(r) continua al cruzar n = 0 (rama logarítmica del SRE)",
+      abs(pc.vortex_cx(150.0, 90.0, 1.3, 1.0, -1e-5)
+          - pc.vortex_cx(150.0, 90.0, 1.3, 1.0, +1e-5)) < 1e-3)
+_rx = [pc.vortex_reaction(0.6, 0.7, 1.0, n) for n in (-1.0, -0.5, 0.0)]
+check("subir n rescata la reacción de RAÍZ (lo que un fan necesita)",
+      _rx[0] < _rx[1] < _rx[2],
+      f"Rx_hub(n=−1,−0.5,0) = {[round(x, 3) for x in _rx]}")
+
+_vn = pc.VORTEX_N
+_r_free = pc.evaluate(THETA_REF, fidelity=pc.Fidelity.L0)
+pc.VORTEX_N = -0.4
+_r_ctrl = pc.evaluate(THETA_REF, fidelity=pc.Fidelity.L0)
+pc.VORTEX_N = _vn
+check("el caché distingue configuraciones de módulo (no devuelve la otra)",
+      _r_ctrl["Rx_hub_min"] > _r_free["Rx_hub_min"] + 0.01,
+      f"Rx_hub {_r_free['Rx_hub_min']:.3f} → {_r_ctrl['Rx_hub_min']:.3f}")
+check("con n=−1 el record es BIT-EXACTO al de antes de la fase 9.1",
+      pc.evaluate(THETA_REF, fidelity=pc.Fidelity.L0)["PR"]
+      == _r_free["PR"])
+
+# --- IGV solo si hay pre-swirl --------------------------------------------
+_th_fan = np.array([1.0, 6200.0, 0.36, 0.55, 0.375, 0.0, 1.0 - 0.375 / 2,
+                    1.35, 1.25, 2.7, 288.15, 101_325.0, 120.0])
+_rec_fan = pc.evaluate(_th_fan, fidelity=pc.Fidelity.L0, use_cache=False)
+_c_fan = gg.build_contract(_th_fan, _rec_fan, None, None)
+check("Rx = 1−ψ/2 ⇒ α₁ = 0 exacto ⇒ la máquina NO lleva IGV",
+      abs(_rec_fan["stage_table"][0]["alpha1_deg"]) < 1e-9
+      and not _rec_fan["igv"]["present"] and _c_fan.get("igv") is None
+      and _c_fan.get("ogv") is not None,
+      f"α₁ = {_rec_fan['stage_table'][0]['alpha1_deg']:.2e}°")
+check("con pre-swirl el IGV sí aparece en física y en contrato",
+      rec["igv"]["present"] and contract.get("igv") is not None)
+
+# --- ensamble detallado ----------------------------------------------------
+if gg._cq() is None:
+    check("ensamble detallado: cadquery no instalado "
+          + ("(EXIGIDO por PHYAC_REQUIRE_STEP)" if REQUIRE_STEP
+             else "(SKIP)"), not REQUIRE_STEP)
+else:
+    _cq = gg._cq()
+    _asm = gg._cq_detailed_machine(_cq, contract)
+    _subs = {ch.name: ch for ch in _asm.children}
+    check("ensamble: tres subensambles ROTOR / STATOR / FASTENERS",
+          set(_subs) == {"ROTOR", "STATOR", "FASTENERS"})
+    _rnames = [ch.name for ch in _subs["ROTOR"].children]
+    check("ROTOR: eje, un disco POR ETAPA y los álabes separados",
+          "Shaft" in _rnames
+          and sum(n.startswith("Disc") for n in _rnames) == rec["n_stages"]
+          and sum(n.startswith("Rotor") for n in _rnames)
+          == sum(s["rotor"]["n_blades"] for s in contract["stages"]),
+          f"{len(_rnames)} componentes de rotor")
+    _snames = [ch.name for ch in _subs["STATOR"].children]
+    check("STATOR: un anillo de carcasa POR ETAPA de estátor",
+          sum(n.startswith("CasingRing") for n in _snames)
+          == rec["n_stages"])
+    _fnames = [ch.name for ch in _subs["FASTENERS"].children]
+    check("FASTENERS: tirantes del rotor y pernos en cada junta",
+          sum(n.startswith("TieBolt") for n in _fnames)
+          == contract["assembly"]["tie_bolt_count"]
+          and sum(n.startswith("CasingBolt") for n in _fnames)
+          == (rec["n_stages"] - 1)
+          * contract["assembly"]["flange_bolt_count"],
+          f"{len(_fnames)} elementos de unión")
+    # el disco DEBE tener menos material que el mismo disco sin ranurar
+    def _find(asm, name):
+        for ch in asm.children:
+            if ch.name == name:
+                return ch
+        return None
+
+    _d1 = _find(_subs["ROTOR"], "Disc1")
+    _c2 = json.loads(json.dumps(contract))
+    _c2["assembly"]["firtree"]["enabled"] = False
+    _asm0 = gg._cq_detailed_machine(_cq, _c2)
+    _d0 = _find(_find(_asm0, "ROTOR"), "Disc1")
+    check("el disco lleva las ranuras REALMENTE brochadas (menos volumen)",
+          _d1.obj.val().Volume() < 0.995 * _d0.obj.val().Volume(),
+          f"{_d1.obj.val().Volume() / 1000:.0f} vs "
+          f"{_d0.obj.val().Volume() / 1000:.0f} cm³")
+    # --- REGRESIÓN: ningún álabe puede atravesar carcasa ni tambor -------
+    # Bug reportado sobre el ensamble: las palas se salían del casing por
+    # fuera y del cubo por dentro. Tres causas encadenadas — secciones
+    # planas sin compensar el radio, filas talladas con los radios de la
+    # ENTRADA de su etapa (el annulus se contrae) y ninguna holgura de
+    # marcha aplicada en el CAD. Máximos medidos entonces: +8.5 mm fuera
+    # de la carcasa y −8.8 mm dentro del tambor.
+    _hub_l, _tip_l = contract["annulus"]["hub"], contract["annulus"]["tip"]
+    _eps = contract["annulus"]["tip_clearance_mm"]
+    _zh = [p[0] for p in _hub_l]
+    _rh = [p[1] for p in _hub_l]
+    _zt = [p[0] for p in _tip_l]
+    _rt = [p[1] for p in _tip_l]
+    _worst_out = -9e9
+    _worst_in = 9e9
+    _rows = [(s["rotor"], "rotor") for s in contract["stages"]] \
+        + [(s["stator"], "stator") for s in contract["stages"]] \
+        + [(contract[k], "stator") for k in ("igv", "ogv") if contract.get(k)]
+    for _row, _kind in _rows:
+        _sh = gg._cq_blade_trimmed(_cq, contract, _row, _kind, 2, 2).val()
+        for _v in _sh.Vertices():
+            _r = math.hypot(_v.X, _v.Y)
+            _worst_out = max(_worst_out,
+                             _r - (float(np.interp(_v.Z, _zt, _rt)) + _eps))
+            _worst_in = min(_worst_in,
+                            _r - float(np.interp(_v.Z, _zh, _rh)))
+    check("ningún álabe atraviesa la CARCASA (recorte contra la vena)",
+          _worst_out <= 1e-6,
+          f"máx. invasión = {_worst_out:+.4f} mm (ε = {_eps:.2f} mm)")
+    check("ningún álabe atraviesa el TAMBOR por dentro",
+          _worst_in >= -1e-6,
+          f"mín. holgura al cubo = {_worst_in:+.4f} mm")
+    _rot0 = contract["stages"][0]["rotor"]
+    _sh_r = gg._cq_blade_trimmed(_cq, contract, _rot0, "rotor", 2, 2).val()
+    _r_tip_real = max(math.hypot(v.X, v.Y) for v in _sh_r.Vertices())
+    # El álabe LLENA la vena: su punta alcanza la línea de punta en su
+    # estación (el límite superior ya lo garantiza el check de invasión;
+    # esto verifica que el recorte no se pasa y deja el álabe corto).
+    _r_case_c = float(np.interp(_rot0["z_center_mm"], _zt, _rt))
+    check("la punta del rotor llega a la vena (no queda corta)",
+          _r_tip_real >= _r_case_c - 0.25,
+          f"r_punta = {_r_tip_real:.2f} mm vs vena {_r_case_c:.2f} mm "
+          f"en la misma estación (ε = {_eps:.2f} mm a la carcasa)")
+    check("todos los sólidos de álabe son VÁLIDOS para booleanas",
+          all(gg._cq_blade_trimmed(_cq, contract, r, k, 2, 2).val().isValid()
+              for r, k in _rows[:4]))
+
+    # --- G-04: INTERFERENCIAS DEL ENSAMBLE MONTADO ---------------------
+    # Los checks de arriba miden filas SUELTAS contra las polilíneas de
+    # annulus. Ninguno de los tres fallos que aparecieron en el STEP era
+    # de esa forma: eran pieza contra pieza ya montada (rim de disco
+    # dentro del álabe, casco de tambor a través del disco, tirantes
+    # atravesando el alma de los discos delanteros). Esto los busca.
+    _parts_asm = gg._asm_parts(_asm)
+    _smp = gg._interference_sample(_parts_asm)
+    _hits = gg.assembly_interferences(contract, parts=_parts_asm)
+    check("ninguna pareja de piezas del ensamble comparte material",
+          not _hits,
+          gg.format_interferences(_hits, len(_smp)).replace("\n", " · "))
+
+    # control NEGATIVO: un chequeo que nunca encuentra nada pasa igual de
+    # verde que uno correcto. Se le mete un solape fabricado a mano.
+    _d1_shape = [ch for ch in _subs["ROTOR"].children
+                 if ch.name == "Disc1"][0].obj.val()
+    _fake = [("A/Disc1", _d1_shape),
+             ("A/Disc1_desplazado", _d1_shape.translate((0, 0, 1.0)))]
+    check("el chequeo DETECTA un solape fabricado a propósito",
+          len(gg.assembly_interferences(contract, parts=_fake)) == 1,
+          f"{len(gg.assembly_interferences(contract, parts=_fake))} par(es)")
+    check("la muestra colapsa las coronas patronadas pero no los discos",
+          sum(n.endswith(("blade001", "blade002")) for n, _ in _smp)
+          == rec["n_stages"] * 2
+          and sum("Disc" in n for n, _ in _smp) == rec["n_stages"]
+          and not any(n.endswith("blade003") for n, _ in _smp),
+          f"{len(_smp)} de {len(_parts_asm)} piezas")
+
+    # el álabe DEBE bajar por debajo del hub (lleva raíz)
+    _b1 = [ch for ch in _subs["ROTOR"].children
+           if ch.name == "Rotor1_blade001"][0]
+    _r_lo = min(math.hypot(v.X, v.Y) for v in _b1.obj.val().Vertices())
+    check("el álabe baja POR DEBAJO de la línea de cubo (tiene raíz)",
+          _r_lo < contract["stages"][0]["rotor"]["sections"][0]["r_mm"] - 1.0,
+          f"r_mín = {_r_lo:.1f} mm vs hub "
+          f"{contract['stages'][0]['rotor']['sections'][0]['r_mm']:.1f} mm")
+
+# ==========================================================================
+print("— T17 · contrato versionado phyac-axial-2 (fase 10 · S-01)")
+
+_schema = cx.load_schema()
+check("el JSON Schema publicado existe y se declara a sí mismo",
+      _schema["properties"]["schema"]["const"] == cx.SCHEMA_ID
+      and os.path.getsize(cx.schema_path()) > 4000,
+      os.path.relpath(cx.schema_path()))
+
+# --- el contrato real valida ----------------------------------------------
+# Se valida el JSON REDONDEADO (dump → load), que es lo que ve un
+# consumidor: de paso prueba que todo el contrato es serializable.
+_c_ref = json.loads(json.dumps(contract))
+_errs = cx.validate(_c_ref)
+check("el contrato de referencia valida contra phyac-axial-2",
+      not _errs, "; ".join(_errs[:3]) or "0 incumplimientos")
+
+_st_ref = sc.evaluate_structural(THETA_REF, rec)
+_c_full = json.loads(json.dumps(
+    gg.build_contract(THETA_REF, rec, _st_ref, {"run": "t17"})))
+_c_fan2 = json.loads(json.dumps(_c_fan))
+_e_full, _e_fan = cx.validate(_c_full), cx.validate(_c_fan2)
+check("validan también las variantes: con bloque structural y sin IGV",
+      not _e_full and not _e_fan and _c_full["structural"]
+      and _c_fan2.get("igv") is None,
+      "; ".join((_e_full + _e_fan)[:3]) or "0 incumplimientos")
+
+# --- lo que motivó subir de versión ---------------------------------------
+# El contrato ganó estos campos DENTRO de phyac-axial-1, sin avisar. Que
+# ahora sean OBLIGATORIOS es justo lo que hace que un consumidor v1 no
+# pueda leer un fichero v2 creyendo que lo entiende.
+_req_d = set(_schema["properties"]["derived"]["required"])
+_req_a = set(_schema["properties"]["assembly"]["required"])
+check("los campos de la fase 9 son OBLIGATORIOS en el esquema, no opcionales",
+      {"vortex_n", "gas_model", "bleed", "stage_stall_first",
+       "ds_machine_J_kgK", "blockage_exit"} <= _req_d
+      and {"firtree", "tie_bolt_count", "tie_bolt_d_mm"} <= _req_a)
+
+# --- el validador detecta DE VERDAD ---------------------------------------
+# Un validador que acepta todo pasa igual de verde que uno correcto. Se le
+# dan seis contratos rotos de formas distintas y tiene que cazar los seis.
+def _broken(mut):
+    c = json.loads(json.dumps(contract))
+    mut(c)
+    return len(cx.validate(c))
+
+
+def _del_firtree(c):
+    del c["assembly"]["firtree"]
+
+
+def _bad_type(c):
+    c["derived"]["n_stages"] = "cuatro"
+
+
+def _out_of_range(c):
+    c["derived"]["eta_poly"] = 1.4
+
+
+def _bad_enum(c):
+    c["stages"][0]["rotor"]["sections"][0]["profile"] = "NACA-4412"
+
+
+def _short_polyline(c):
+    c["annulus"]["hub"] = [[0.0, 100.0]]
+
+
+def _bad_point(c):
+    c["annulus"]["tip"][1] = [0.0, 100.0, 7.0]
+
+
+_caught = [_broken(f) > 0 for f in (_del_firtree, _bad_type, _out_of_range,
+                                    _bad_enum, _short_polyline, _bad_point)]
+check("el validador caza los 6 modos de rotura (falta, tipo, rango, "
+      "enum, longitud, forma)", all(_caught),
+      f"{sum(_caught)}/6")
+check("el booleano no es booleano: n_stages=True NO es un entero válido",
+      _broken(lambda c: c["derived"].update(n_stages=True)) > 0)
+
+# --- versión mayor y frontera con la capa 5c ------------------------------
+check("la versión mayor se lee del identificador y es la 2",
+      cx.schema_major(contract) == cx.SCHEMA_MAJOR == 2
+      and cx.schema_major({"schema": "phyac-axial-7"}) == 7
+      and cx.schema_major({"schema": "otra-cosa"}) is None)
+
+_cs_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "AxialCompressorDesigner", "src",
+                            "AxialCompressorDesigner", "PhyACImport.cs"),
+               encoding="utf-8").read()
+_m_cs = re.search(r"nSCHEMA_MAJOR\s*=\s*(\d+)", _cs_src)
+check("la capa 5c (C#) declara la MISMA versión mayor que Python",
+      _m_cs is not None and int(_m_cs.group(1)) == cx.SCHEMA_MAJOR,
+      f"C# = {_m_cs.group(1) if _m_cs else '?'}, "
+      f"Python = {cx.SCHEMA_MAJOR}")
+check("el lector C# RECHAZA una versión mayor desconocida en vez de "
+      "aplicar defaults",
+      "NotSupportedException" in _cs_src
+      and "nMajor != nSCHEMA_MAJOR" in _cs_src)
+
+# un contrato de la versión anterior tiene que fallar por el identificador,
+# no colarse porque «casi» encaja
+_c_v1 = json.loads(json.dumps(contract))
+_c_v1["schema"] = "phyac-axial-1"
+del _c_v1["assembly"]["firtree"]
+check("un contrato v1 se rechaza (identificador y campos que le faltan)",
+      cx.schema_major(_c_v1) == 1 and len(cx.validate(_c_v1)) >= 2)
+
+# --- el CLI del validador ---------------------------------------------------
+with tempfile.TemporaryDirectory() as _td17:
+    _p_ok = os.path.join(_td17, "axial_compressor.json")
+    with open(_p_ok, "w", encoding="utf-8") as _f:
+        json.dump(_c_ref, _f)
+    _p_bad = os.path.join(_td17, "v1.json")
+    with open(_p_bad, "w", encoding="utf-8") as _f:
+        json.dump(_c_v1, _f)
+    check("CLI del validador: 0 en el contrato bueno, 1 en el v1",
+          cx._main(["contract_schema.py", _p_ok]) == 0
+          and cx._main(["contract_schema.py", _p_bad]) == 1)
+
+# ==========================================================================
+print("— T18 · fidelidad L1 (SCM sobre turbo-design)")
+# La vía L1 no tenía NI UNA comprobación: si turbo-design no importa,
+# `_try_load_turbodesign` devuelve False sin ruido y todo el sistema corre
+# en L0 creyendo que corre en L1. Así se descubrió que turbo-design 1.4.2
+# no declara `requests` entre sus dependencias — estaba instalado y no
+# cargaba.
+_td_ok = pc._try_load_turbodesign()
+if not _td_ok:
+    check("L1: turbo-design no disponible "
+          + ("(EXIGIDO por PHYAC_REQUIRE_L1)" if REQUIRE_L1 else "(SKIP)"),
+          not REQUIRE_L1, str(pc._TD_REASON))
+else:
+    _r_l1 = pc.evaluate(THETA_REF, fidelity=pc.Fidelity.L1, use_cache=False)
+    check("L1 resuelve de verdad: el record viene del SCM, no del meanline",
+          _r_l1["source"] == "scm_L1",
+          _r_l1["source"])
+    _r_l0 = pc.evaluate(THETA_REF, fidelity=pc.Fidelity.L0, use_cache=False)
+    check("L1 mueve el resultado respecto a L0 pero se queda en el mismo "
+          "orden de magnitud",
+          _r_l1["PR"] != _r_l0["PR"]
+          and 0.6 < _r_l1["PR"] / _r_l0["PR"] < 1.6
+          and 0.5 < _r_l1["eta_poly"] < 1.0,
+          f"PR {_r_l0['PR']:.3f} → {_r_l1['PR']:.3f}, "
+          f"η_p {_r_l0['eta_poly']:.3f} → {_r_l1['eta_poly']:.3f}")
+    check("el record L1 conserva el contrato de campos del L0",
+          set(_r_l0) <= set(_r_l1)
+          and _r_l1["n_stages"] == _r_l0["n_stages"])
+    check("un diseño INVIABLE no paga el SCM (se queda en L0)",
+          pc.evaluate(np.array([8.0, 30_000.0, 0.90, 1.20, 0.90, 0.0, 0.30,
+                                2.5, 2.5, 1.0, 288.15, 101_325.0, 60.0]),
+                      fidelity=pc.Fidelity.L1,
+                      use_cache=False)["source"].startswith("meanline_L0"))
 
 # ==========================================================================
 print(f"\n{_n_pass}/{_n_pass + _n_fail} checks OK"

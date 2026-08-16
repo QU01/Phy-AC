@@ -43,7 +43,8 @@ import numpy as np
 from physics_core import (Fidelity, register_hifi_pair, VAR_NAMES, NDIM,
                           BOUNDS_LO, BOUNDS_HI,
                           l1_available, l1_unavailable_reason,
-                          set_cache_path, compressor_map)
+                          set_cache_path, compressor_map,
+                          SM_FLOW_MIN as pc_SM_MIN)
 from neural_optimizer import (DesignSpec, design, OUT_KEYS,
                               AutonomousAxialDesigner, evaluate_design,
                               pareto_from_checkpoint)
@@ -80,6 +81,18 @@ def parse_args(argv=None):
                    choices=structures_core.list_materials(),
                    help="rotor material for the structural margins "
                         "(default Ti-6Al-4V)")
+    s.add_argument("--vortex-n", type=float, default=None, metavar="N",
+                   help="vortex exponent Cu(r) = Cu_m*(r/r_m)^N. -1 = free "
+                        "vortex (default, classic); -0.5..0 = controlled "
+                        "vortex, which is what a low hub-to-tip FAN needs — "
+                        "free vortex collapses its hub reaction")
+    s.add_argument("--m-exit-max", type=float, default=None, metavar="M",
+                   help="max absolute exit Mach (default 0.55, diffuser/"
+                        "combustor-friendly). A fan discharging into a "
+                        "bypass duct runs 0.6-0.7")
+    s.add_argument("--sm-flow-min", type=float, default=None, metavar="F",
+                   help="minimum working-line surge margin in mass flow "
+                        "(default 0.15 = 15%%)")
     s.add_argument("--spec-file", type=str, default=None,
                    help="JSON with the spec (overwrites flags)")
     s.add_argument("--fix", action="append", default=None,
@@ -146,12 +159,22 @@ def parse_args(argv=None):
                    help="export STEP for re-CAD (optional `step` extra / "
                         "CadQuery): exact revolved solids + one sample "
                         "blade per row in machine coordinates")
-    o.add_argument("--step-mode", choices=["parts", "assembly", "blade0"],
+    o.add_argument("--step-mode",
+                   choices=["parts", "assembly", "blade0", "detailed",
+                            "full"],
                    default="parts",
                    help="STEP scope: one file per physical part (+ "
                         "parts/README.txt with blade counts, default), "
-                        "also a named cq.Assembly, or a single rotor-1 "
-                        "blade")
+                        "also a named cq.Assembly, a single rotor-1 blade, "
+                        "the detailed hierarchical assembly (shaft, discs "
+                        "with broached fir-tree slots, bladed rotors, "
+                        "casing rings with flanges, tie bolts), or the "
+                        "full machine with every row patterned")
+    o.add_argument("--check-interference", action="store_true",
+                   help="pairwise boolean check over the assembled machine: "
+                        "no two parts may share material. Reports the "
+                        "offending pair and the overlapped volume, and "
+                        "fails the run if anything overlaps")
     o.add_argument("--voxel", type=float, default=None,
                    help="voxel resolution in mm for STL generation "
                         "(e.g. 0.3, 0.5, 0.8); implies --stl")
@@ -182,12 +205,39 @@ def parse_fixed(items) -> dict:
     return fixed
 
 
+def apply_machine_class(args) -> dict:
+    """Parámetros de CLASE DE MÁQUINA: no son variables de diseño (el
+    optimizador no los busca) sino decisiones del ingeniero que cambian
+    la física del meanline. Se escriben en el módulo y se registran en
+    run_meta para que la corrida sea reproducible.
+
+    * `vortex_n`: un compresor clásico va a vórtice libre (−1); un FAN de
+      HTR bajo NO puede — el vórtice libre le hunde la reacción de raíz.
+    * `m_exit_max`: 0.55 es el límite amable para un difusor/cámara; un
+      fan que descarga a un conducto de bypass corre 0.6-0.7.
+    """
+    import physics_core as _pc
+    import geometry_generator as _gg
+    meta = {}
+    if args.vortex_n is not None:
+        _pc.VORTEX_N = _gg.VORTEX_N = float(args.vortex_n)
+        meta["vortex_n"] = float(args.vortex_n)
+    if args.m_exit_max is not None:
+        _pc.M_EXIT_MAX = float(args.m_exit_max)
+        meta["m_exit_max"] = float(args.m_exit_max)
+    meta.setdefault("vortex_n", _pc.VORTEX_N)
+    meta.setdefault("m_exit_max", _pc.M_EXIT_MAX)
+    return meta
+
+
 def build_spec(args) -> DesignSpec:
     kw = dict(PR_target=args.pr, massflow=args.mdot, RPM_max=args.rpm_max,
               U_tip_max=args.utip_max, r_tip_max_mm=args.rtip_max,
               n_stages_max=args.nstages_max,
               power_max_W=args.power_max, T0_in=args.t0, P0_in=args.p0,
               material=args.material, fixed_vars=parse_fixed(args.fix))
+    if args.sm_flow_min is not None:
+        kw["sm_flow_min"] = float(args.sm_flow_min)
     if args.spec_file:
         with open(args.spec_file) as f:
             kw.update(json.load(f))
@@ -404,6 +454,34 @@ def emit_deliverables(args, spec, result, outdir, ckpt=None, logger=None,
             print(ui.warn("cadquery not installed — STEP export skipped "
                           "(pip install cadquery)"))
 
+    # ---- Interferencias del ensamble (G-04) ----
+    # Los fallos de geometría que han aparecido hasta ahora los encontró
+    # una persona abriendo el STEP. Esto los busca solo: el volumen de la
+    # intersección de dos piezas que no deben ocupar el mismo sitio tiene
+    # que ser cero.
+    if getattr(args, "check_interference", False):
+        contract_path = os.path.join(geo_dir, "axial_compressor.json")
+        with open(contract_path, encoding="utf-8") as f:
+            contract = json.load(f)
+        cq_mod = geometry_generator._cq()
+        if cq_mod is None:
+            print(ui.warn("cadquery not installed — interference check "
+                          "skipped (pip install cadquery)"))
+        else:
+            parts = geometry_generator._asm_parts(
+                geometry_generator._cq_detailed_machine(cq_mod, contract))
+            n_sample = len(geometry_generator._interference_sample(parts))
+            hits = geometry_generator.assembly_interferences(
+                contract, parts=parts)
+            txt = geometry_generator.format_interferences(hits, n_sample)
+            if hits:
+                args._interference_failed = True
+                print(ui.err("interference  → " + txt.splitlines()[0]))
+                for line in txt.splitlines()[1:]:
+                    print("  " + ui.c(line, "err"))
+            else:
+                print("  " + ui.ok("interference → " + txt))
+
     # ---- Generación de STL con C# (opcional) ----
     if args.stl or args.voxel is not None:
         voxel_val = args.voxel if args.voxel is not None else 0.5
@@ -421,26 +499,43 @@ def emit_deliverables(args, spec, result, outdir, ckpt=None, logger=None,
         with open(map_path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             w.writerow(["speed_frac", "rpm", "vsv_deg", "mdot_kgs", "PR",
-                        "eta_poly", "min_SM", "M_rel_tip1", "unstable",
-                        "stall", "choke"])
+                        "eta_poly", "min_SM", "M_rel_tip1",
+                        "stage_stall_first", "stall", "choke",
+                        "mdot_surge", "mdot_choke", "mdot_wl", "PR_wl",
+                        "sm_flow"])
             for sl in mp["speedlines"]:
+                wl = sl.get("working_point") or {}
                 for q in sl["points"]:
                     w.writerow([sl["speed_frac"], sl["rpm"],
                                 sl.get("vsv_deg", 0.0), q["mdot"],
                                 q["PR"], q["eta_poly"], q["min_SM"],
-                                q["M_rel_tip1"], int(q["unstable"]),
-                                int(q["stall"]), int(q["choke"])])
+                                q["M_rel_tip1"], q["stage_stall_first"],
+                                int(q["stall"]), int(q["choke"]),
+                                sl["mdot_surge"], sl["mdot_choke"],
+                                wl.get("mdot"), wl.get("PR"),
+                                wl.get("sm_flow")])
         print("  " + ui.ok(f"map        → {map_path}"))
-        print(ui.c(f"\n  Off-design map (L0 proxy, VSV {vsv_mode}):",
-                   "dim"))
+        print(ui.c(f"\n  Off-design map (VSV {vsv_mode}) — surge…choke, "
+                   "working point and margin:", "dim"))
         for sl in mp["speedlines"]:
             su, ch = sl["mdot_surge"], sl["mdot_choke"]
+            wl = sl.get("working_point")
             rng_txt = (f"{su:.2f} – {ch:.2f} kg/s" if su is not None
                        else ui.c("no stable range", "warn"))
+            if wl:
+                pct = 100.0 * wl["sm_flow"]
+                sty = ("ok" if wl["sm_flow"] >= pc_SM_MIN
+                       else ("warn" if pct > 5.0 else "err"))
+                wl_txt = ("  " + ui.c(f"SM {pct:.0f}%", sty)
+                          + ui.c(f" @ {wl['mdot']:.2f} kg/s · PR "
+                                 f"{wl['PR']:.2f} · 1st stall st."
+                                 f"{wl['stage_stall_first'] + 1}", "dim"))
+            else:
+                wl_txt = ""
             vsv_txt = (ui.c(f"  VSV {sl['vsv_deg']:.0f}°", "accent")
                        if sl.get("vsv_deg") else "")
             print(f"    {ui.c('N=%.2f' % sl['speed_frac'], 'key')} "
-                  f"({sl['rpm']:,.0f} RPM): {rng_txt}{vsv_txt}")
+                  f"({sl['rpm']:,.0f} RPM): {rng_txt}{vsv_txt}{wl_txt}")
 
     # ---- Final result ----
     feasible = rec.get("feasible")
@@ -453,6 +548,7 @@ def emit_deliverables(args, spec, result, outdir, ckpt=None, logger=None,
          + ui.c(f"  (target {spec.PR_target:.2f})", "dim")),
         ("polytropic η", ui.c(f"{rec['eta_poly']:.3f}", "val", bold=True)),
         ("Stages", f"{rec.get('n_stages', '?')}"),
+        ("Surge margin", _sm_row(rec)),
         ("U_tip", f"{rec['U_tip']:.0f} m/s"),
         ("Status", status),
         ("Pareto", f"{len(result['pareto_front'])} points ({feas} feasible)"),
@@ -474,6 +570,16 @@ def emit_deliverables(args, spec, result, outdir, ckpt=None, logger=None,
           + ui.c(report, "brand", bold=True))
     print()
     return report
+
+
+def _exit_code(args) -> int:
+    """3 si el chequeo de interferencias encontró piezas solapadas.
+
+    Un entregable con interferencias no es un entregable: el CLI tiene que
+    decirlo con el código de salida, no solo por pantalla, para que un CI
+    o un script lo note.
+    """
+    return 3 if getattr(args, "_interference_failed", False) else 0
 
 
 # ----------------------------------------------------------- pareto mode
@@ -513,10 +619,29 @@ def run_pareto_mode(args) -> int:
     print("  " + ui.ok(f"Pareto point #{n} → {outdir}/"))
     emit_deliverables(args, spec, result, outdir, ckpt=None,
                       title=f"Pareto point #{n}")
-    return 0
+    return _exit_code(args)
 
 
 # ----------------------------------------------------------- main
+def _sm_row(rec: dict) -> str:
+    """Margen de bombeo en la LÍNEA DE TRABAJO — el número que un ingeniero
+    de compresores mira antes que ningún otro. Sin línea de trabajo la
+    palabra "margen" no tiene denominador (Dixon & Hall §5.9)."""
+    sm = rec.get("sm_flow")
+    if sm is None:
+        return ui.c("not evaluated", "dim")
+    pct = 100.0 * float(sm)
+    sty = "ok" if sm >= pc_SM_MIN else ("warn" if pct > 5.0 else "err")
+    txt = ui.c(f"{pct:.1f}%", sty, bold=True) \
+        + ui.c(f"  (min {100 * pc_SM_MIN:.0f}%)", "dim")
+    srg = rec.get("surge") or {}
+    if srg.get("ok"):
+        txt += ui.c(f" · {srg['mdot_surge']:.1f} → {srg['mdot_wl']:.1f} → "
+                    f"{srg['mdot_choke']:.1f} kg/s · 1st stall st."
+                    f"{srg['stage_stall_first'] + 1}", "dim")
+    return txt
+
+
 def main(argv=None) -> int:
     # consolas/pipes Windows reportan cp1252 y truenan con η/₂/✓
     for _s in (sys.stdout, sys.stderr):
@@ -544,12 +669,16 @@ def main(argv=None) -> int:
     if args.quick:
         args.n_init, args.rounds, args.batch_size = 100, 2, 8
     os.makedirs(args.outdir, exist_ok=True)
+    machine_class = apply_machine_class(args)
     try:
         spec = build_spec(args)
     except ValueError as e:
         print(ui.warn(str(e)))
         return 2
     warn_fixed_out_of_bounds(spec)
+    if abs(machine_class["vortex_n"] + 1.0) > 1e-9:
+        print(ui.c(f"  vortex exponent n = {machine_class['vortex_n']:+.2f} "
+                   "(controlled vortex, not free)", "accent"))
     fidelity = Fidelity.L1 if args.fidelity == "L1" else Fidelity.L0
 
     if fidelity == Fidelity.L1 and not l1_available():
@@ -596,7 +725,7 @@ def main(argv=None) -> int:
             for name, val in zip(VAR_NAMES, result["theta"])]))
         emit_deliverables(args, spec, result, args.outdir, ckpt=None,
                           logger=logger, title="Evaluated design")
-        return 0
+        return _exit_code(args)
 
     # ---- optimización (nueva o reanudada) ----
     ckpt = os.path.join(args.outdir, "phyac_run.json")
@@ -651,7 +780,7 @@ def main(argv=None) -> int:
 
     emit_deliverables(args, spec, result, args.outdir, ckpt=ckpt,
                       logger=logger)
-    return 0
+    return _exit_code(args)
 
 
 if __name__ == "__main__":

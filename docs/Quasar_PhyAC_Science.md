@@ -187,10 +187,133 @@ rotor-exit station** (needed by the L1 passage, §3).
   (measured: −4.8 pts η at ṁ = 2.5 kg/s vs 25 kg/s at equal θ). The
   REF_AX4 regression anchor was re-frozen citing this change.
 
-Stage efficiency $\eta_{tt} = 1 - \sum \Delta h_{loss}/\Delta h_0$; stage
-PR from the local polytropic relation; machine
-$\eta_{poly} = \frac{\gamma-1}{\gamma}\,\ln PR / \ln\tau$. The OGV
-(last row) removes the residual swirl and pays its ω̄ as a P0 drop.
+Stage efficiency, stage PR and machine efficiency: see 2.2b - since
+phase 9 they come from an entropy march with a calorically imperfect gas,
+not from the constant-cp polytropic formulas. The IGV (first row,
+axial -> alpha_1) and the OGV (last row, alpha_1 -> axial) both pay their
+omega_bar as a P0 drop and their chord as machine length.
+
+### 2.2b Real gas, entropy bookkeeping, stall and end walls (phase 9)
+
+**Calorically imperfect gas.** $c_p(T)$ is a quadratic fit of the JANAF
+tables (<1% over 250-1000 K) and $\gamma = c_p/(c_p-R)$. Three state
+functions carry the stacking:
+
+$$h(T)=\int c_p\,dT,\qquad \varphi(T)=\int \frac{c_p}{T}\,dT,\qquad
+s_2-s_1 = \varphi(T_2)-\varphi(T_1) - R\ln\frac{p_2}{p_1}$$
+
+from which the efficiencies are **exact** for an imperfect gas - the
+generalization of Dixon & Hall 1.11:
+
+$$\eta_{poly}=\frac{R\ln PR}{\varphi(T_2)-\varphi(T_1)},\qquad
+\eta_{isen}=\frac{h(T_{2s})-h(T_1)}{h(T_2)-h(T_1)},\quad
+\varphi(T_{2s})=\varphi(T_1)+R\ln PR$$
+
+At $\tau \approx 2.4$ (the E3 HPC) $c_p$ rises ~7% and $\gamma$ falls to
+1.36; with a constant $c_p$ that error goes straight into $PR$.
+
+**Loss to work by entropy** (Dixon & Hall 5.5, Eq. 5.4-5.9). Each row's
+$\bar\omega$ is referred to the **compressible** dynamic head $P_0-p$
+(the Koch & Smith 1976 definition - using $\tfrac12\rho W^2$ understates
+the loss by 60% at $M_{rel}\approx1.4$). The stage is then marched with
+real total pressures: relative total across the rotor (conserved at
+constant radius), absolute across the stator, so $PR_i$ *falls out of the
+march* instead of a formula. The work-equivalent of a loss is
+
+$$\Delta h_{loss} = T_{03}\,\Delta s,\qquad
+\Delta s = R\ln\frac{P_{0,in}}{P_{0,out}}$$
+
+evaluated at the **stage exit** temperature. The previous form
+$\Delta h = \bar\omega\,\tfrac12 W_1^2$ is $\Delta P_0/\rho$ at the row
+inlet, which understates hot rear stages by the factor $T_{03}/T_{0,row}$
+(15-25% per stage, compounding through a multistage machine).
+
+**Stalling pressure rise - Koch (1981).** The constant
+`CH_STALL_MAX = 0.48` is replaced by the real correlation. The stage's
+enthalpy-equivalent static-pressure-rise coefficient uses the
+**isentropic** static rise from $p_1$ to $p_3$ (Koch's definition; using
+$\Delta h_0$ overstates $C_h$ by $1/\eta \approx 1.12$):
+
+$$C_h=\frac{h(T_s)-h(T_1)}{\tfrac12 (W_1^2+C_2^2)},\qquad
+\varphi(T_s)=\varphi(T_1)+R\ln\frac{p_3}{p_1}$$
+
+and stall is reached when $C_h/\mathfrak{F}_{ef}$ meets
+
+$$C_{h,stall}^{ef} = \bigl[0.35+0.145\ln(L/g_2)\bigr]\cdot f_{Re}\cdot
+f_\epsilon \cdot f_{\Delta z}$$
+
+with $L/g_2 = \frac{\theta/2}{\sin(\theta/2)}\cdot\frac{\sigma}{\cos\beta_2}$
+the cascade diffusion parameter (circular-arc meanline length over exit
+staggered spacing), the three correction factors from Koch's Figs. 4-6
+(Reynolds, tip clearance $\epsilon/g$, axial spacing $\Delta z/s$), and
+
+$$\mathfrak{F}_{ef} = \frac{V^2 + 2.5\,V_{min}^2 + 0.5\,U^2}{4V^2}$$
+
+the **effective dynamic head factor** (his Fig. 13), where $V_{min}$ is
+the lowest inlet velocity the row can see in the presence of upstream
+wakes and wall boundary layers ($V\sin(\alpha+\beta)$ when
+$\alpha+\beta\le90$ deg). This is the term that explains why low-stagger
+stages stall early: they cannot re-energize the low-momentum fluid that
+reaches them.
+
+**End walls - Koch & Smith (1976).** Howell's annulus drag
+($C_{Da}=0.020\,s/h$) and the `K_ENDWALL = 1.4` multiplier that
+compensated for it are gone. In their place, the sum of wall displacement
+thicknesses of their Eq. (3) and Fig. 8,
+
+$$\frac{2\delta^*}{g} = 0.16\,x^3 + 2\frac{\epsilon}{g}x,
+\qquad x=\frac{C_h^{ef}}{C_{h,stall}^{ef}}$$
+
+gives **both** the annulus blockage (which now *emerges* from loading
+instead of being the invented line $0.98-0.005i$) and the efficiency
+debit of their Eq. (2):
+
+$$\eta = \tilde\eta\,\frac{1-\sum\delta^*/h}{1-\sum\nu/h},
+\qquad \sum\nu \approx 0.48\sum\delta^*$$
+
+A Mach factor on the **profile** loss closes the set: their Fig. 6 shows
+the rotor loss coefficient nearly doubling between $M_1=0.1$ and 1.5, an
+effect Lieblein's incompressible correlation cannot know:
+$f_M = 1+0.50\,(M^2-0.0625)$.
+
+### 2.2c Off-design that answers the engineer's question (phase 9)
+
+A compressor map without a **working line** cannot state a surge margin -
+there is no denominator. With a fixed-area choked exit nozzle, Dixon &
+Hall 5.9 Eq. (5.26b) ties inlet non-dimensional flow to pressure ratio:
+
+$$\frac{\dot m\sqrt{c_pT_{01}}}{D^2p_{01}} = C\,
+\left(\frac{p_{0e}}{p_{01}}\right)^{1-\frac{\gamma-1}{2\gamma\eta_p}}$$
+
+so $\dot m \propto PR^{\,k}$, with $C$ fixed by requiring the line to
+pass through the design point. Each speedline is then bounded by its own
+physics rather than swept over an arbitrary flow range:
+
+* **choke** is found by bisection on the choke flag and *limits the mass
+  flow* - the speedline goes vertical. (Previously the meanline kept
+  computing past choke and returned $PR<1$: a compressor that expands.)
+* **surge** is whichever comes first walking down from choke: Koch's
+  capability exhausted ($\min SM \le 0$) **or** zero/positive speedline
+  slope (Dixon 5.11, Fig. 5.14). The second criterion is essential -
+  incidence-driven loss growth can flatten the line before $C_h$ reaches
+  its limit, and the first criterion alone would then never fire.
+
+The reported margin is the one an engineer writes in a specification:
+
+$$SM = \frac{PR_s/\dot m_s}{PR_{wl}/\dot m_{wl}} - 1,\qquad
+SM_{\dot m} = \frac{\dot m_{wl}-\dot m_s}{\dot m_{wl}}$$
+
+and $SM_{\dot m} \ge 15\%$ is a **hard constraint** of the optimizer.
+The measured correlation between the design-point Koch margin and the
+working-line flow margin is only $r = 0.57$ over feasible LHS designs -
+which is precisely why constraining the former did not deliver the
+latter, and why the map of a "verified" design used to have zero width.
+
+**Bleed** is now physics, not just a hole: a per-stage extracted fraction
+reduces the mass flow the downstream stages see, and the geometry
+contract places the casing port **behind the stage that stalls first**,
+so the printed part and the aerodynamic model finally point at the same
+place.
 
 ### 2.3 L0 Pseudocode
 
@@ -200,11 +323,17 @@ for stage i in 0..N-1:
     psi_i from (psi_mid, psi_slope)
     solve axial Mach at stage inlet (bisection, swirl alpha1)
     triangles from (phi, psi_i, Rx)  →  W1, W2, C1, C2, angles
-    losses: Lieblein profile + Howell endwall + shock avg + clearance
-    eta_tt_i, PR_i, T0/P0 update; Koch Ch and stall margin SM_i
+    cp_i, gamma_i = gas properties at local T0         # phase 9
+    losses: Lieblein profile (x Mach factor) + Howell secondary
+            + shock avg + tip clearance                # all as omega_bar
+    entropy march: P01rel -> P02rel -> P02 -> P03      # real totals
+    eta_fs = 1 - T03*ds_fs/dh0                         # Dixon Eq. 5.4
+    Koch: Ch (isentropic static rise)/F_ef vs Ch_stall(L/g2, Re, eps, dz)
+    Koch & Smith: 2*delta*/g -> blockage for next station AND eta debit
+    T0/P0 update; mdot *= (1 - bleed_i)
     next-station area maintaining design Cx (local density, blockage)
-OGV loss; machine totals (PR, eta_poly, power, AN², length)
-g vector (8 aero constraints, continuous)
+IGV and OGV losses; machine totals (PR, eta_poly via phi(T), power, AN²)
+g vector (9 aero constraints, continuous)
 ```
 
 ### 2.4 Constraints and Stability

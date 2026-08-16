@@ -106,7 +106,8 @@ def fetch(data_dir: Path = DEFAULT_DATA_DIR, force: bool = False) -> dict:
             "url": url, "sha256": _sha256(dest), "bytes": dest.stat().st_size,
             "fetched_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-    manifest_path.write_text(json.dumps(manifest, indent=2))
+    manifest_path.write_text(json.dumps(manifest, indent=2),
+                             encoding="utf-8", newline=chr(10))
     return manifest
 
 
@@ -118,7 +119,11 @@ def write_manifest(data_dir: Path = DEFAULT_DATA_DIR) -> Path:
         if p.exists():
             man[rel] = {"sha256": _sha256(p), "bytes": p.stat().st_size}
     out = data_dir / "manifest.json"
-    out.write_text(json.dumps(man, indent=2))
+    # LF explícito: en Windows write_text traduce a CRLF y deja el
+    # árbol sucio en cada rebuild, contradiciendo la política de
+    # _write_csv y la normalización eol=lf de .gitattributes.
+    out.write_text(json.dumps(man, indent=2),
+                   encoding="utf-8", newline=chr(10))
     return out
 
 

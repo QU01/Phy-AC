@@ -36,6 +36,7 @@ sys.path.insert(0, _ROOT)
 
 import numpy as np
 
+import physics_core as pc
 from physics_core import CP, GAMMA, Fidelity, _meanline, evaluate
 from validation.machines import (MACHINES, REGRESSION_ANCHORS, PR_TOL_REL,
                                  ETA_TOL_PTS, ETA_GUARD_PTS)
@@ -50,13 +51,33 @@ KIND_LABEL = {
 # ---------------------------------------------------------------------------
 # Espec publicada → θ 13-D
 # ---------------------------------------------------------------------------
-def measured_dT0(spec: dict, measured: dict) -> float:
-    """ΔT0 total desde (PR, η) medidos — el trabajo real de la máquina."""
+def measured_dh0(spec: dict, measured: dict) -> float:
+    """Δh0 total [J/kg] desde (PR, η) medidos — el trabajo real.
+
+    Desde la fase 9 el meanline usa gas caloríficamente imperfecto, así
+    que el trabajo que se le INYECTA tiene que derivarse con el mismo gas
+    (si no, se le pide a la máquina una ψ inconsistente con su propio cp
+    y el PR sale sesgado). Con la función de entropía phi(T):
+
+        η_isen dada:  phi(T2s) = phi(T1) + R·ln(PR)
+                      Δh0 = [h(T2s) − h(T1)] / η_isen
+        η_poly dada:  phi(T2)  = phi(T1) + R·ln(PR)/η_poly
+                      Δh0 = h(T2) − h(T1)
+    """
     PR, T0 = measured["PR"], spec["T0"]
+    h1, p1 = pc.h_air(T0), pc.phi_air(T0)
     if "eta_isen" in measured:
-        return T0 * (PR ** ((GAMMA - 1) / GAMMA) - 1.0) / measured["eta_isen"]
-    # η politrópica: τ = PR^((γ−1)/(γ·η_p))
-    return T0 * (PR ** ((GAMMA - 1) / (GAMMA * measured["eta_poly"])) - 1.0)
+        T2s = pc.T_from_phi(p1 + pc.RGAS * math.log(PR), T0 * 1.2)
+        return (pc.h_air(T2s) - h1) / measured["eta_isen"]
+    T2 = pc.T_from_phi(p1 + pc.RGAS * math.log(PR) / measured["eta_poly"],
+                       T0 * 1.5)
+    return pc.h_air(T2) - h1
+
+
+def measured_dT0(spec: dict, measured: dict) -> float:
+    """ΔT0 equivalente al trabajo medido (solo para reporte)."""
+    T0 = spec["T0"]
+    return pc.T_from_h(pc.h_air(T0) + measured_dh0(spec, measured), T0) - T0
 
 
 def build_theta(spec: dict, measured: dict,
@@ -71,7 +92,7 @@ def build_theta(spec: dict, measured: dict,
     r_tip_target = spec["U_tip"] / omega
     r_mean = 0.5 * (1.0 + spec["HTR"]) * r_tip_target
     Um = omega * r_mean
-    psi = CP * measured_dT0(spec, measured) / (spec["n_stages"] * Um ** 2)
+    psi = measured_dh0(spec, measured) / (spec["n_stages"] * Um ** 2)
     tail = ([slopes.get("phi_slope", 0.0), slopes.get("Rx_slope", 0.0)]
             if slopes else [])
 
@@ -100,20 +121,32 @@ def model_metrics(rec: dict, spec: dict, kind: str) -> dict:
     """PR y η (isen/poly) del modelo en el plano medido."""
     T0 = spec["T0"]
     if kind == "rotor":
-        # PR/η del ROTOR de la etapa 1, derivados del desglose de pérdidas
+        # PR/η del ROTOR de la etapa 1, derivados del desglose de pérdidas.
+        # El endwall de la etapa se reparte por cabeza dinámica (el rotor
+        # se lleva su parte); la fuga de punta es toda suya.
         s = rec["stage_table"][0]
         L = s["losses"]
         dh0 = s["dh0"]
-        eta_rot = float(np.clip(
-            (dh0 - L["rotor"] - L["clearance"]) / max(dh0, 1e-3), 0.05, 0.99))
-        tau = 1.0 + dh0 / (CP * T0)
-        PR = (1.0 + eta_rot * dh0 / (CP * T0)) ** (GAMMA / (GAMMA - 1))
+        ds_ew = max(s["ds_stage_J_kgK"] - L["ds_rotor"] - L["ds_stator"]
+                    - L["ds_clearance"], 0.0)
+        f_rot = L["ds_rotor"] / max(L["ds_rotor"] + L["ds_stator"], 1e-9)
+        dh_rot = s["T0_out_K"] * (L["ds_rotor"] + L["ds_clearance"]
+                                  + f_rot * ds_ew)
+        eta_rot = float(np.clip((dh0 - dh_rot) / max(dh0, 1e-3), 0.05, 0.99))
+        T0_out = pc.T_from_h(pc.h_air(T0) + dh0, T0 + dh0 / 1005.0)
+        PR = pc.pr_from_work(T0, eta_rot * dh0)
     else:
         PR = rec["PR"]
-        tau = rec["T0_out"] / T0
-    eta_isen = (PR ** ((GAMMA - 1) / GAMMA) - 1.0) / max(tau - 1.0, 1e-9)
-    eta_poly = ((GAMMA - 1) / GAMMA) * math.log(PR) / \
-        max(math.log(tau), 1e-9) if PR > 1 else 0.0
+        T0_out = rec["T0_out"]
+    # η exactas para gas imperfecto (mismas definiciones que physics_core)
+    if PR > 1.0 + 1e-9 and T0_out > T0 + 1e-9:
+        dphi = pc.phi_air(T0_out) - pc.phi_air(T0)
+        eta_poly = pc.RGAS * math.log(PR) / max(dphi, 1e-9)
+        T_isen = pc.T_from_phi(pc.phi_air(T0) + pc.RGAS * math.log(PR), T0_out)
+        eta_isen = (pc.h_air(T_isen) - pc.h_air(T0)) / \
+            max(pc.h_air(T0_out) - pc.h_air(T0), 1e-6)
+    else:
+        eta_poly = eta_isen = 0.0
     return dict(PR=PR, eta_isen=eta_isen, eta_poly=eta_poly)
 
 

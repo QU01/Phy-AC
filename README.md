@@ -160,13 +160,17 @@ Python phase outputs in `<outdir>/`: `report.html` (self-contained; Pareto
 front, per-stage table, Smith chart, loss breakdown, velocity triangles,
 annulus, structural margins, CFD BCs, traceability — plus the matplotlib
 section when installed; skip with `--no-figures`), `figures/`, `geometry/`
-(`axial_compressor.json` — the schema `phyac-axial-1` contract consumed by
+(`axial_compressor.json` — the schema `phyac-axial-2` contract consumed by
 layer 5c, with per-row camber sections, annulus polylines, assembly
 parameters and the structural block —, `annulus.csv`, `stage_summary.csv`,
 `bom.csv`, `blade_stage0.step` if CadQuery is available; with `--step`,
 re-CAD STEP of the machine — `parts/*.step` per physical part with one
-sample blade + blade counts in `parts/README.txt`, or a named assembly
-with `--step-mode assembly`), `dataset.csv`
+sample blade + blade counts in `parts/README.txt`, a named assembly with
+`--step-mode assembly`, the hierarchical machine with real separate parts
+with `--step-mode detailed`, or every row patterned with `--step-mode
+full`; add `--check-interference` to boolean-check the assembled machine
+pair by pair — it prints the guilty pair and the shared volume and exits
+3 if anything overlaps), `dataset.csv`
 (data flywheel), `phyac_run.json` (traceable checkpoint), `phys_cache.jsonl`
 (persistent cache of expensive L1 evaluations), `map.csv` with `--map`.
 
@@ -187,7 +191,8 @@ C# phase outputs: one STL per part plus the union views (binary, in mm).
 | `AxialCompressorDesigner/` | 5c | C# library + PicoGK: imports `axial_compressor.json` (`PhyACImport`) and builds shaft, bladed discs and casing rings as printable STLs. |
 | `AxialCompressorDesigner.Example/` | 5c | Executable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | product | End-to-end CLI: spec → design → geometry → report → dataset [→ STLs via --stl/--voxel]. |
-| `test_phyac.py` | VV&UQ | Verification suite: 80 checks (triangles, conservation, g continuity, profiles, contract, disc solver, optimizer core, overlap regression). |
+| `contract_schema.py` | 5a | Published JSON Schema of `phyac-axial-2` + dependency-free validator (also a CLI: `python contract_schema.py <contract>`). |
+| `test_phyac.py` | VV&UQ | Verification suite: 149 checks (triangles, conservation, g continuity, profiles, contract schema, disc solver, optimizer core, L1 spool, assembly interference). |
 | `validation/` | VV&UQ | Validation campaign vs NASA Stage 35, Rotor 37/67 and GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## Python API (layers 1–5b)
@@ -282,12 +287,14 @@ Phy-AC/
 ├── neural_optimizer.py                   layers 2–4 ensemble + NSGA-II + design(spec)
 ├── blade_profiles.py                     layer 5a  NACA-65/DCA + metal angles
 ├── geometry_generator.py                 layer 5a  contract + CSV/BOM/STEP exports
+├── contract_schema.py                    layer 5a  phyac-axial-2 schema + validator (CLI)
 ├── data_pipeline.py                      layer 0   public aggregates + SHA-256 manifest
 ├── report_generator.py                   layer 5b  self-contained HTML report
 ├── visualization.py                      layer 5b  matplotlib figures (optional)
 ├── phyac_cli.py                          end-to-end CLI (spec → design → report [→ STLs])
-├── test_phyac.py                         verification suite (80 checks)
+├── test_phyac.py                         verification suite (149 checks)
 │
+├── schemas/                              published JSON Schema of the contract
 ├── validation/                           validation campaign (machines.py, validate.py)
 ├── data/                                 in-repo correlation anchors + manifest.json
 ├── docs/                                 Quasar_PhyAC_Science.md · VALIDATION.md
@@ -371,10 +378,16 @@ independent voxel fields built in the same `Library.Go` session.
 ## Verification and Validation
 
 ```bash
-python test_phyac.py               # verification: 80 checks
+python test_phyac.py               # verification: 149 checks
 python validation/validate.py      # validation: NASA machines → RESULTS.md
 python data_pipeline.py            # data anchors: rebuild + SHA-256 verify
+python contract_schema.py runs/x/geometry/axial_compressor.json   # contract
 ```
+
+With the optional extras installed, `PHYAC_REQUIRE_STEP=1` and
+`PHYAC_REQUIRE_L1=1` turn what would otherwise be a silent skip into a
+failure — that is how CI runs it, so a runner without CadQuery cannot go
+green without having checked the geometry.
 
 **Verification** (`test_phyac.py` — do we solve the equations right?)
 covers triangle identities, Euler/enthalpy conservation, the isentropic
@@ -391,10 +404,10 @@ Current table in [validation/RESULTS.md](validation/RESULTS.md):
 
 | Machine | ΔPR | Δη |
 |---|---|---|
-| NASA Stage 35 (transonic stage) | +0.8% | +1.2 pts |
-| NASA Rotor 37 (transonic rotor) | −1.1% | −1.5 pts |
-| NASA Rotor 67 (transonic fan) | −0.7% | −1.4 pts |
-| GE/NASA E³ HPC (10 stages) | −4.8% | −1.4 pts |
+| NASA Stage 35 (transonic stage) | +1.2% | +1.7 pts |
+| NASA Rotor 37 (transonic rotor) | −1.2% | −1.6 pts |
+| NASA Rotor 67 (transonic fan) | −1.2% | −2.5 pts |
+| GE/NASA E³ HPC (10 stages) | −5.6% | −1.6 pts |
 
 Adding a machine is a data entry in
 [validation/machines.py](validation/machines.py); internal regression
@@ -427,6 +440,63 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
   design. The assembly view STL is for inspection only — print the parts.
 
 ## History
+
+- **2026-08-16 — versioned contract, assembly interference check and a
+  CI that covers them (phase 10)**: three things that all existed on
+  paper and none of which a machine checked. (a) **The contract is
+  versioned**: `phyac-axial-2` with a published JSON Schema
+  (`schemas/phyac-axial-2.schema.json`), a dependency-free validator
+  (`contract_schema.py`, also a CLI) exercised against six deliberately
+  broken contracts, and a layer-5c reader that **refuses** a major it
+  does not know instead of filling the gaps with defaults. Phase 9 had
+  added fir-tree, tie bolts, `vortex_n`, `bleed` and `sm_flow` while
+  keeping the `phyac-axial-1` label — a v1 consumer had no way to notice.
+  (b) **Assembly interference check** (`--check-interference`, exit code
+  3): pairwise boolean over the assembled machine, reporting the guilty
+  pair and the shared volume. It immediately found three defects that the
+  per-row vertex test could not see — drum shells running straight
+  through the disc rims (53 cm³ each), tie bolts crossing the webs of the
+  forward discs because every disc computed its own bolt circle, and disc
+  rims poking into the blades because the rim was a cylinder while the
+  hub line rises. All three fixed; the assembly is now clean at 1 mm³.
+  (c) **CI actually covers what changed**: pinned dependencies, a job
+  with the `step` and `l1` extras where `PHYAC_REQUIRE_STEP`/`_L1` turn a
+  missing optional dependency from a silent skip into a failure, and an
+  end-to-end CLI smoke that validates the emitted contract. That job
+  found L1 had been silently dead: `turbo-design` does not declare
+  `requests`, and `_scm_solve` spawned its worker through
+  multiprocessing, which on Windows re-imports the caller's `__main__` —
+  so any script without a `__main__` guard timed out into L0 without a
+  word. Both fixed. Verification 112 → 149 checks.
+
+- **2026-08-16 — physics of range and real gas (phase 9)**: the loss
+  bookkeeping was rebuilt on cited mechanism instead of tuned constants.
+  (a) **Calorically imperfect gas**: cp(T), γ(T) and exact
+  imperfect-gas efficiencies through the entropy function
+  phi(T) = ∫cp/T dT. (b) **Entropy-based losses** (Dixon & Hall §5.5,
+  Eq. 5.4–5.9): the stage is marched with real total pressures and the
+  work-equivalent of a loss is T₀₃·Δs — the old ω̄·½W₁² understated hot
+  rear stages by 15–25% each; ω̄ now refers to the compressible head
+  (P₀−p) as Koch & Smith define it. (c) **Koch 1981 stall correlation**
+  replaces the constant `CH_STALL_MAX`: Ch_ef,stall from the cascade
+  diffusion parameter L/g₂ with Reynolds, tip-clearance and axial-spacing
+  corrections and the effective dynamic head 𝔉_ef. (d) **Koch & Smith
+  1976 end-wall**: annulus blockage now EMERGES from loading
+  (2δ*/g ∝ x³ + 2(ε/g)x) and carries its own efficiency debit, retiring
+  Howell's annulus drag and the `K_ENDWALL = 1.4` fudge. **The map is a
+  tool now**: choke limits mass flow (speedlines go vertical instead of
+  collapsing below PR = 1), Dixon's working line (Eq. 5.26b) gives the
+  denominator that "surge margin" was missing, and margin in mass flow is
+  a **hard constraint** (`SM_FLOW_MIN = 15%`). Also: **bleed** exists in
+  the physics (not just as a hole in the casing) and the port is placed
+  behind the stage that stalls first; the **IGV** finally pays its loss
+  and its length; **hub reaction** became the 9th hard constraint; the
+  surrogate is short-circuited under L0 fidelity (it was learning to copy
+  one of its own inputs); manufactured solidity is reported against the
+  optimized one; and rotor blades get a **fir-tree root** with its
+  broached disc slot in the STEP path (the last place turbodesigner was
+  ahead). Verification 80 → 112 checks; four NASA machines still PASS with
+  three fewer free constants (docs/VALIDATION.md §3).
 
 - **2026-07-17 — assembly STEP (phase 8.2)**: `--step` exports re-CAD
   STEP in machine coordinates (revolved shaft/hub/casing with bolted
