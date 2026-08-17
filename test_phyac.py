@@ -50,6 +50,9 @@ _n_pass = _n_fail = 0
 # extras (ver .github/workflows/ci.yml).
 REQUIRE_STEP = os.environ.get("PHYAC_REQUIRE_STEP", "") not in ("", "0")
 REQUIRE_L1 = os.environ.get("PHYAC_REQUIRE_L1", "") not in ("", "0")
+# Igual para la capa 5c (C#): la paridad STL↔STEP solo se puede comprobar
+# con la solucion compilada. PHYAC_REQUIRE_STL=1 en el job que la compila.
+REQUIRE_STL = os.environ.get("PHYAC_REQUIRE_STL", "") not in ("", "0")
 
 
 def check(name: str, ok, detail: str = ""):
@@ -1100,6 +1103,55 @@ else:
                                 2.5, 2.5, 1.0, 288.15, 101_325.0, 60.0]),
                       fidelity=pc.Fidelity.L1,
                       use_cache=False)["source"].startswith("meanline_L0"))
+
+# ==========================================================================
+print("— T20 · paridad capa 5c (C#/PicoGK) ↔ via CadQuery (fase 10 · G-01)")
+# El STL es la ruta de fabricacion y el STEP la de re-CAD. Entre la fase
+# 8.2 y la 10 se separaron sin que nada avisara. Esto compara la parte
+# BARATA (matematica pura: perfil de abeto, longitud de raiz, pendiente
+# de plataforma, tornilleria) en cada corrida de la suite; la paridad
+# cara por volumenes vive en validation/parity_stl_step.py.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "validation"))
+import parity_stl_step as ps        # noqa: E402
+
+_cs_ok, _cs_why = ps.csharp_available()
+if not _cs_ok:
+    check("paridad 5c: capa C# no compilada "
+          + ("(EXIGIDO por PHYAC_REQUIRE_STL)" if REQUIRE_STL else "(SKIP)"),
+          not REQUIRE_STL, _cs_why)
+else:
+    with tempfile.TemporaryDirectory() as _td20:
+        _p20 = os.path.join(_td20, "axial_compressor.json")
+        with open(_p20, "w", encoding="utf-8") as _f:
+            json.dump(_c_ref, _f)
+        _cs20 = ps.csharp_profile(_p20)
+        _py20 = ps.python_profile(_c_ref)
+        _e20 = ps.compare_profiles(_cs20, _py20)
+        check("las dos vias construyen la MISMA raiz de abeto "
+              "(perfil punto a punto)", not _e20,
+              "; ".join(_e20[:3]) or f"{len(_cs20['root_profile'])} puntos, "
+              f"{len(_cs20['rows'])} filas de rotor")
+        check("la capa 5c lee tirantes y rebaje de rim del contrato",
+              _cs20["tie_bolt_count"]
+              == _c_ref["assembly"]["tie_bolt_count"]
+              and abs(_cs20["tie_bolt_d_mm"]
+                      - _c_ref["assembly"]["tie_bolt_d_mm"]) < 1e-6
+              and abs(_cs20["rim_relief_mm"]
+                      - _c_ref["assembly"]["rim_relief_mm"]) < 1e-6,
+              f"{_cs20['tie_bolt_count']} tirantes de "
+              f"{_cs20['tie_bolt_d_mm']:g} mm")
+        check("el numero de secciones del loft de abeto coincide "
+              "(la ranura no puede encajar si no)",
+              _cs20["n_sections"] == gg.N_FIRTREE_SECTIONS
+              and abs(_cs20["slot_axial_factor"] - 1.05) < 1e-9,
+              f"{_cs20['n_sections']} secciones")
+        # el comparador tiene que DETECTAR una separacion real
+        _py_bad = json.loads(json.dumps(_py20))
+        _py_bad["root_profile"][3][0] += 0.05
+        _py_bad["rows"][0]["root_axial_mm"] += 1.0
+        check("el comparador de paridad caza una separacion fabricada",
+              len(ps.compare_profiles(_cs20, _py_bad)) >= 2)
 
 # ==========================================================================
 print(f"\n{_n_pass}/{_n_pass + _n_fail} checks OK"

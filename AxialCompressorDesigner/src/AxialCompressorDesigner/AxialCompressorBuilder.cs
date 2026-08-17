@@ -51,6 +51,29 @@ namespace AxialCompressorDesigner
             return strOutputStl;
         }
 
+        /// <summary>Builds every part and writes a machine-readable
+        /// parity report (volume + bounding box per part) instead of
+        /// STLs. Used by validation/parity_stl_step.py to check that the
+        /// PicoGK route and the CadQuery route describe the SAME machine.
+        /// </summary>
+        public static void BuildParityReport(AxialCompressorParameters p,
+                                             string outputDir,
+                                             string strReportPath)
+        {
+            string strErr = p.Validate();
+            if (strErr != null)
+                throw new ArgumentException("Invalid parameters: " + strErr);
+            Directory.CreateDirectory(outputDir);
+            Directory.CreateDirectory(
+                Path.GetDirectoryName(Path.GetFullPath(strReportPath)));
+            PicoGK.Library.Go(
+                p.VoxelSizeMm,
+                () => ParityReport.WritePartsJson(p, strReportPath),
+                Path.Combine(outputDir, "PicoGK.log"),
+                true,
+                $"AxialCompressorDesigner — parity {p.OutputName}");
+        }
+
         static void BuildTask(AxialCompressorParameters p,
                               string strOutputStl, bool showViewer,
                               string strFilter)

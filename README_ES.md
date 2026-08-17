@@ -79,8 +79,8 @@ donde van las juntas apernadas reales:
 | Pieza | Archivo exportado | Contenido |
 |---|---|---|
 | **Eje motriz** | `<Name>_Shaft.stl` | Eje con muñones de montaje en ambos extremos y barreno central |
-| **Disco-álabe** ×N | `<Name>_RotorStage{i}.stl` | Alma del disco + segmento del casco del hub (incl. espaciador bajo su estátor) + álabes de rotor de la etapa i |
-| **Anillo de carcasa** ×N | `<Name>_StatorRing{i}.stl` | Segmento del casco + vanos de estátor; el primero y el último llevan las bridas; el de la etapa de sangrado lleva el puerto |
+| **Disco-álabe** ×N | `<Name>_RotorStage{i}.stl` | Disco (barreno de ajuste, alma, rim siguiendo la línea de cubo, ranuras de abeto brochadas, círculo de tirantes) + casco del hub entre bandas de disco + álabes de rotor de la etapa i, cada uno con su raíz de abeto |
+| **Anillo de carcasa** ×N | `<Name>_StatorRing{i}.stl` | Segmento del casco + vanos de estátor; brida apernada en CADA extremo de cada anillo (se apernan entre sí); el de la etapa de sangrado lleva el puerto |
 | **Rotor / Carcasa** (vistas) | `<Name>_Rotor.stl` / `<Name>_Casing.stl` | Uniones en posición de marcha |
 | **Ensamble** (vista) | `<Name>.stl` | Todo (solo inspección) |
 
@@ -197,7 +197,7 @@ Salidas de la fase C#: un STL por pieza más las vistas de unión
 | `AxialCompressorDesigner.Example/` | 5c | Ejecutable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | producto | CLI end-to-end: espec → diseño → geometría → informe → dataset [→ STLs vía --stl/--voxel]. |
 | `contract_schema.py` | 5a | JSON Schema publicado de `phyac-axial-2` + validador sin dependencias (también CLI: `python contract_schema.py <contrato>`). |
-| `test_phyac.py` | VV&UQ | Suite de verificación: 149 checks (triángulos, conservación, continuidad de g, perfiles, esquema del contrato, solver de disco, núcleo del optimizador, spool L1, interferencias del ensamble). |
+| `test_phyac.py` | VV&UQ | Suite de verificación: 153 checks (triángulos, conservación, continuidad de g, perfiles, esquema del contrato, solver de disco, núcleo del optimizador, spool L1, interferencias del ensamble). |
 | `validation/` | VV&UQ | Campaña de validación vs NASA Stage 35, Rotor 37/67 y GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## API Python (capas 1–5b)
@@ -299,10 +299,11 @@ Licencias de terceros: ver [README.md](README.md#third-party-licenses).
 ## Verificación y validación
 
 ```bash
-python test_phyac.py               # verificación: 149 checks
+python test_phyac.py               # verificación: 153 checks
 python validation/validate.py      # validación: máquinas NASA → RESULTS.md
 python data_pipeline.py            # anclas de datos: rebuild + SHA-256
 python contract_schema.py runs/x/geometry/axial_compressor.json   # contrato
+python validation/parity_stl_step.py runs/x/geometry/axial_compressor.json 0.6   # STL vs STEP
 ```
 
 Con los extras instalados, `PHYAC_REQUIRE_STEP=1` y `PHYAC_REQUIRE_L1=1`
@@ -356,6 +357,30 @@ predicción de pérdidas → (η, PR). Tabla vigente en
   imprimir las piezas.
 
 ## Historia
+
+- **2026-08-16 — la capa 5c vuelve a describir la misma máquina que la
+  vía CadQuery (fase 10 · G-01)**: el STL (ruta de fabricación) y el STEP
+  (ruta de re-CAD) se habían separado. Portado a C#: la **retención de
+  abeto** (`FirTree.cs`, puerto línea a línea de `firtree_profile` y
+  `_cq_firtree_solid` — perfil, loft de 5 secciones, brochado inclinado,
+  plataforma que sigue la línea de cubo), el **recorte de cada fila
+  contra la vena** en vez de posarla en los radios de su sección, las
+  **holguras de marcha** con la convención del contrato, el **disco**
+  (barreno de ajuste, alma, rim siguiendo la línea de cubo con su rebaje,
+  ranuras brochadas, círculo de tirantes común, casco del tambor que se
+  detiene en la banda del disco) y **`tie_bolt_count`/`tie_bolt_d_mm`**.
+  Dos cosas corregidas por el camino: los anillos de carcasa del STL solo
+  llevaban brida en los dos extremos de la máquina, así que los anillos
+  impresos no se podían apernar entre sí; y la carcasa de CadQuery no
+  tenía puerto de sangrado, que el contrato declara desde la fase 7.
+  `validation/parity_stl_step.py` mide ya las dos rutas una contra otra
+  — **eje −0.1 %, rotor −1.1 %, carcasa −0.7 %** en volumen y radios
+  exteriores dentro de 0.4 mm (máquina de 2 etapas, vóxel 0.6 mm, filete
+  de raíz apagado en las dos). La mitad barata de esa comparación corre
+  en cada pasada de la suite y en el CI. Y midió algo que conviene
+  señalar: el paso de filete de raíz de la 5c añade el **24 % del
+  volumen de un anillo de carcasa** para un filete de 2 mm — ver
+  docs/VALIDATION.md. Verificación 149 → 153 checks.
 
 - **2026-08-16 — contrato versionado, chequeo de interferencias del
   ensamble y un CI que los cubre (fase 10)**: tres cosas que existían

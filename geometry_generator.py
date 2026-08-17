@@ -1107,6 +1107,35 @@ def _cq_detailed_machine(cq, contract: dict, k_span: int = 2,
             ring = ring.union(fl)
             if at_start and i > 0:
                 joints.append((zf, r_b, i))
+        # PUERTO DE SANGRADO: boss radial con barreno pasante en el anillo
+        # de la etapa que elige la física (stage_stall_first + 2). Existía
+        # en la vía STL desde la fase 7 y NO en esta: el contrato lo
+        # declara y las dos rutas tienen que construir la misma máquina.
+        if i + 1 == int(np.clip(asm_p.get("bleed_stage", 1), 1, n_st)):
+            zb = st["stator"]["z_center_mm"]
+            r_in = r_at(shell_line, zb)
+            r_out = r_in + wall + float(asm_p.get("bleed_boss_h_mm", 14.0))
+            d_boss = float(asm_p.get("bleed_boss_d_mm", 32.0))
+            d_hole = float(asm_p.get("bleed_hole_d_mm", 18.0))
+            boss = (cq.Workplane("YZ", origin=(r_in + 1.0, 0.0, zb))
+                    .circle(0.5 * d_boss)
+                    .extrude(-(r_out - r_in - 1.0)))
+            hole = (cq.Workplane("YZ", origin=(r_in - 2.0, 0.0, zb))
+                    .circle(0.5 * d_hole)
+                    .extrude(-(r_out - r_in + 4.0)))
+            # El boss es un cilindro RADIAL de d_boss de diámetro: sobre
+            # su huella axial la carcasa se contrae, así que su borde de
+            # aguas arriba entra en la vena y muerde los vanos. Se corta
+            # contra el barreno de la carcasa, que es la superficie que
+            # ninguna pieza estática puede cruzar.
+            zsb = np.linspace(z0 - 2.0, z1 + 2.0, 40)
+            prof_b = ([(0.0, float(zsb[0]))]
+                      + [(r_at(shell_line, float(z)), float(z))
+                         for z in zsb]
+                      + [(0.0, float(zsb[-1]))])
+            bore = (cq.Workplane("XZ").polyline(prof_b).close()
+                    .revolve(360.0, (0, 0), (0, 1)))
+            ring = _fuse_wp(cq, ring, boss).cut(bore).cut(hole)
         stator.add(ring, name=f"CasingRing{i + 1}")
         vane = _cq_blade_trimmed(cq, contract, st["stator"], "stator",
                                  k_span, k_pts)

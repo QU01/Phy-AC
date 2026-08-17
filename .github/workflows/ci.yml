@@ -137,3 +137,21 @@ jobs:
           dotnet-version: "9.0.x"
       - name: Build layer 5c
         run: dotnet build AxialCompressorDesigner.sln -c Debug
+
+      # Paridad BARATA entre la capa 5c y la via CadQuery: perfil de raiz
+      # de abeto punto a punto, longitud y pendiente de plataforma por
+      # fila, tirantes y rebaje de rim. Es matematica pura de los dos
+      # lados — no necesita GPU ni CadQuery — y es lo que caza que los dos
+      # puertos vuelvan a separarse. La paridad CARA (volumenes por
+      # conjunto, con PicoGK) corre en local: ver README.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (pinned core)
+        run: pip install numpy==2.4.6
+      - name: Contract for the parity check
+        run: |
+          python phyac_cli.py --pr 3.0 --mdot 20 --quick --fidelity L0 --fix n_stages=3 --no-figures --no-color --outdir runs/ci_stl
+      - name: Parity layer 5c vs CadQuery (profile)
+        run: |
+          python validation/parity_stl_step.py runs/ci_stl/geometry/axial_compressor.json --profile-only

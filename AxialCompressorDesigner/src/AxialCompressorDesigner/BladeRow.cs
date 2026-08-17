@@ -51,19 +51,37 @@ namespace AxialCompressorDesigner
         /// smooths the ruled surface between them.</summary>
         const int nSpanSubdiv = 2;
 
+        /// <summary>Radial over-extension of the raw loft before it is
+        /// trimmed against the flow path. Must comfortably exceed the
+        /// clearances and the annulus contraction along the chord; the
+        /// CadQuery path uses the same 4 mm.</summary>
+        const float fTrimExtendMm = 4f;
+
         /// <summary>
-        /// Builds all blades of one row as a single voxel field.
-        /// Dispatches to the solid-profile loft when the contract carries
-        /// closed profiles and the row is thick enough; falls back to the
-        /// camber-sheet shell otherwise.
+        /// Builds all blades of one row as a single voxel field, TRIMMED
+        /// against the annulus.
+        ///
+        /// Until phase 10 each row was simply laid on the radii its own
+        /// sections carried. That is wrong twice over: the annulus also
+        /// contracts ALONG THE CHORD, so a tip that fits at the row centre
+        /// pokes out of the casing at the trailing edge; and it left the
+        /// running clearances to be faked by shifting the end sections.
+        /// Now the blade is lofted with radial margin and cut against the
+        /// real hub/tip polylines — the same recipe as the CadQuery route
+        /// (geometry_generator._cq_blade_trimmed), so both describe the
+        /// same blade.
+        ///
+        /// Clearances follow the contract convention: the ROTOR is born at
+        /// the hub and ends at the tip line (the running gap lives between
+        /// it and the casing bore, which sits at tip + eps); the STATOR
+        /// hangs from the casing bore and leaves eps over the drum.
         /// </summary>
+        /// <param name="p">Machine parameters (annulus, clearance, fir-tree).</param>
         /// <param name="row">Row parameters (sections hub→tip).</param>
-        /// <param name="fTipClearanceMm">Running clearance at the free end.</param>
-        /// <param name="fRootSinkMm">How deep the root rib sinks into its body.</param>
         /// <param name="fMinThicknessMm">Lower bound on printable wall
         /// thickness (2 voxels).</param>
-        public static Voxels voxBuildRow(RowParams row, float fTipClearanceMm,
-                                         float fRootSinkMm,
+        public static Voxels voxBuildRow(AxialCompressorParameters p,
+                                         RowParams row,
                                          float fMinThicknessMm)
         {
             bool bSolid = true;
@@ -83,38 +101,75 @@ namespace AxialCompressorDesigner
                     "shell.");
                 bSolid = false;
             }
-            return bSolid
-                ? voxBuildRowSolid(row, fTipClearanceMm, fRootSinkMm,
-                                   fMinThicknessMm)
-                : voxBuildRowShell(row, fTipClearanceMm, fRootSinkMm,
-                                   fMinThicknessMm);
+
+            Voxels vox = bSolid
+                ? voxBuildRowSolid(row, fMinThicknessMm)
+                : voxBuildRowShell(row, fMinThicknessMm);
+
+            vox &= voxFlowPath(p, row, fMinThicknessMm);
+
+            // Fir-tree roots hang BELOW the hub line, so they are added
+            // after the trim (the trim would cut them off). The disc
+            // broaches the matching slot with the same profile plus the
+            // assembly fit — see FirTree.cs.
+            if (row.Rotating && p.FirTree.Enabled)
+                vox += FirTree.voxRootRing(
+                    p, row, RotorDrum.fRHubAt(p.HubLine, row.ZCenterMm));
+            return vox;
+        }
+
+        /// <summary>The solid of revolution the row is cut against: the
+        /// flow path between the hub and tip polylines over the row's
+        /// axial slot, with the running clearances applied.</summary>
+        static Voxels voxFlowPath(AxialCompressorParameters p, RowParams row,
+                                  float fMinThicknessMm)
+        {
+            // The voxelized surface still rounds by about half a voxel, so
+            // the free end is pulled in by that much: without it a rotor
+            // tip trimmed exactly at the tip line welds itself to the
+            // casing bore whenever eps <= the voxel size.
+            float fEdge = 0.25f * fMinThicknessMm;      // = ½ voxel
+            float fEps = p.TipClearanceMm;
+            if (row.Rotating && fEps < 2f * fEdge)
+                Library.Log(
+                    $"WARNING row stage {row.StageIndex}: tip clearance " +
+                    $"{fEps:F2} mm is below one voxel " +
+                    $"({2f * fEdge:F2} mm) — the printed gap is set by the " +
+                    "voxel, not by the design. Use a finer voxel for a " +
+                    "faithful running clearance.");
+
+            float fRHubOff = row.Rotating ? 0f : fEps + fEdge;
+            float fRTipOff = row.Rotating ? -fEdge : fEps;
+            float fZ0 = row.ZLeMm - 2f;
+            float fZ1 = row.ZTeMm + 2f;
+
+            Voxels vox = LatticeUtils.voxRevolveZ(t =>
+            {
+                float fZ = fZ0 + t * (fZ1 - fZ0);
+                return new Vector2(
+                    Casing.fRTipAt(p.TipLine, fZ) + fRTipOff, fZ);
+            }, 0f, 64);
+            return vox - LatticeUtils.voxRevolveZ(t =>
+            {
+                float fZ = (fZ0 - 2f) + t * ((fZ1 + 2f) - (fZ0 - 2f));
+                return new Vector2(
+                    RotorDrum.fRHubAt(p.HubLine, fZ) + fRHubOff, fZ);
+            }, 0f, 64);
         }
 
         // ══════════════════════════════════════════════════════════════
         // Recipe 1 — solid profile loft (real thickness distribution)
         // ══════════════════════════════════════════════════════════════
-        static Voxels voxBuildRowSolid(RowParams row, float fTipClearanceMm,
-                                       float fRootSinkMm,
-                                       float fMinThicknessMm)
+        static Voxels voxBuildRowSolid(RowParams row, float fMinThicknessMm)
         {
             int nSecs = row.Sections.Count;
             var afR = new float[nSecs];
             for (int i = 0; i < nSecs; i++)
                 afR[i] = row.Sections[i].RMm;
-
-            // the exact surface still rounds by ~½ voxel at free edges:
-            // pull the free end in by clearance + that rounding
-            float fEdge = 0.25f * fMinThicknessMm;   // = ½ voxel
-            if (row.Rotating)
-            {
-                afR[0] -= fRootSinkMm;                     // into the drum
-                afR[nSecs - 1] -= fTipClearanceMm + fEdge; // tip gap
-            }
-            else
-            {
-                afR[0] += fTipClearanceMm + fEdge;         // hub gap
-                afR[nSecs - 1] += fRootSinkMm;             // into casing
-            }
+            // Radial margin at BOTH ends; the flow-path trim decides where
+            // the blade actually stops (voxBuildRow).
+            afR[0] -= fTrimExtendMm;
+            afR[nSecs - 1] += fTrimExtendMm;
 
             Rib[] aRibs = DensifyRibs(row, afR, bProfile: true);
             Mesh msh = new Mesh();
@@ -227,9 +282,7 @@ namespace AxialCompressorDesigner
         // ══════════════════════════════════════════════════════════════
         // Recipe 2 — camber sheet + voxMeshShell (Phy-CC v3 fallback)
         // ══════════════════════════════════════════════════════════════
-        static Voxels voxBuildRowShell(RowParams row, float fTipClearanceMm,
-                                       float fRootSinkMm,
-                                       float fMinThicknessMm)
+        static Voxels voxBuildRowShell(RowParams row, float fMinThicknessMm)
         {
             float fThick = MathF.Max(row.MeanThicknessMm, fMinThicknessMm);
             if (row.MeanThicknessMm < fMinThicknessMm)
@@ -242,22 +295,14 @@ namespace AxialCompressorDesigner
 
             int nSecs = row.Sections.Count;
 
-            // Stacking radii, adjusted at root (sink) and free end (pull in
-            // by clearance + shell inflation so voxMeshShell does not eat
-            // the running gap).
+            // Radial margin at both ends; the flow-path trim in
+            // voxBuildRow decides where the blade stops. The shell also
+            // inflates by fHalf, which the trim removes as well.
             var afR = new float[nSecs];
             for (int i = 0; i < nSecs; i++)
                 afR[i] = row.Sections[i].RMm;
-            if (row.Rotating)
-            {
-                afR[0] -= fRootSinkMm;                       // into the drum
-                afR[nSecs - 1] -= fTipClearanceMm + fHalf;   // tip gap
-            }
-            else
-            {
-                afR[0] += fTipClearanceMm + fHalf;           // hub gap
-                afR[nSecs - 1] += fRootSinkMm;               // into casing
-            }
+            afR[0] -= fTrimExtendMm + fHalf;
+            afR[nSecs - 1] += fTrimExtendMm + fHalf;
 
             // densify the span: interpolated ribs (r, stagger, camber)
             var aRibs = DensifyRibs(row, afR, bProfile: false);

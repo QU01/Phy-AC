@@ -1,7 +1,7 @@
 # Phy-AC — Campaña de validación
 
 Distinción VV&UQ del proyecto: `test_phyac.py` VERIFICA (¿resolvemos bien
-las ecuaciones? — 149 checks); `validation/validate.py` VALIDA (¿las
+las ecuaciones? — 153 checks); `validation/validate.py` VALIDA (¿las
 ecuaciones correctas? — contra máquinas NASA medidas). CI corre ambos en
 estricto.
 
@@ -162,6 +162,40 @@ PR 2.7160→2.7616, η_poly 0.8871→0.9013.
   marcada APROXIMADA en machines.py).
 - Con validación off-design (speedlines): calibrar el mapa VSV.
 - Pares CFX/banco para `HiFiCalibration` (L2) del sesgo L1 (≈0.94 en PR).
+
+### Paridad STL ↔ STEP (fase 10 · G-01)
+
+`validation/parity_stl_step.py` compara las dos rutas de salida: la capa
+5c (C#/PicoGK, ruta de fabricación) y la vía CadQuery (ruta de re-CAD).
+Medido el 2026-08-16 sobre una máquina de 2 etapas (PR 1.29, r_punta
+109 mm) a vóxel 0.6 mm, con el filete de raíz apagado en las dos rutas:
+
+| Conjunto | STL | STEP | Δ | r exterior STL / STEP |
+|---|---|---|---|---|
+| Eje | 246.5 cm³ | 246.6 cm³ | −0.1 % | 20.00 / 20.00 mm |
+| Rotor | 638.2 cm³ | 645.5 cm³ | −1.1 % | 108.66 / 109.05 mm |
+| Carcasa | 950.6 cm³ | 957.0 cm³ | −0.7 % | 126.70 / 126.70 mm |
+
+Tolerancias declaradas a partir de esa medida: 5 % en volumen por
+conjunto y 1.5 mm en radio exterior. La comparación es por CONJUNTOS y no
+pieza a pieza a propósito: las dos rutas parten la máquina en planos
+distintos —el STL donde van las juntas apernadas, el STEP donde están las
+piezas de re-CAD— y comparar pieza a pieza compararía esa decisión, no la
+máquina.
+
+La parte barata de la comparación (perfil de abeto punto a punto,
+longitud y pendiente de plataforma por fila, tirantes, rebaje de rim) es
+matemática pura y corre en cada pasada de la suite (bloque T20) y en el
+CI; la cara (volúmenes, con PicoGK) corre en local.
+
+**Hallazgo abierto**: el paso de filete de raíz de la capa 5c
+(`voxWithRootFillets`, `Fillet` = over-offset morfológico con r = 2 mm)
+añade **117 cm³ a un anillo de carcasa de 488 cm³ — un 24 %**. Un filete
+de 2 mm sobre las raíces de ~70 vanos no puede pasar de unos pocos cm³.
+El paso está añadiendo mucho más material del que declara, y ese material
+NO está en el STEP ni en el margen estructural. Por eso la comparación se
+hace con el filete apagado y por eso queda anotado aquí: pendiente de
+investigar.
 
 ### Nota de la fase 10 (2026-08-16) — qué significaba «L1» hasta ahora
 

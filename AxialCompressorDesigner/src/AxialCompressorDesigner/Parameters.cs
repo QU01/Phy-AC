@@ -31,6 +31,24 @@ namespace AxialCompressorDesigner
                                           // legacy contracts (shell fallback)
     }
 
+    /// <summary>Fir-tree blade retention, mirroring the contract's
+    /// `assembly.firtree` block one to one. Defaults match
+    /// geometry_generator.build_contract so a legacy contract without the
+    /// block still builds something sensible — but `Enabled` is false
+    /// there, and the builder then falls back to the old sunk root.</summary>
+    public sealed class FirTreeParams
+    {
+        public bool Enabled = false;
+        public int NTeeth = 3;
+        public float WTopMm = 6f;         // total width at the platform
+        public float DepthMm = 10f;       // radial depth of the root
+        public float TaperDeg = 8f;       // half-angle of the tree
+        public float LobeFrac = 0.22f;    // neck depth / local half-width
+        public float ClearanceMm = 0.08f; // broaching/assembly fit per side
+        public float AxialFrac = 0.85f;   // root length / row axial chord
+        public float MinWidthMm = 3f;
+    }
+
     /// <summary>One blade row (rotor or stator) with its span sections.</summary>
     public sealed class RowParams
     {
@@ -68,7 +86,13 @@ namespace AxialCompressorDesigner
 
         public float DrumInnerRadiusMm = 20f;   // shaft radius under the disks
         public float CasingWallMm = 5f;         // casing shell thickness
-        public float RootSinkMm = 1.5f;         // blade root sink into body
+        public float RootSinkMm = 1.5f;         // blade root sink into body.
+                                                // Legacy: only used when the
+                                                // contract carries no fir-tree
+                                                // (FirTree.Enabled == false).
+                                                // With retention the root is a
+                                                // real fir-tree in a broached
+                                                // slot, not a sunk rib.
         public float BladeFilletRMm = 2f;       // root fillet radius (0 = off;
                                                 // same value structures_core
                                                 // uses for the Peterson K_t)
@@ -88,6 +112,17 @@ namespace AxialCompressorDesigner
         public float BleedHoleDMm = 18f;
         public float BleedBossDMm = 32f;
         public float BleedBossHMm = 14f;
+        public int TieBoltCount = 12;           // tie bolts through the discs
+        public float TieBoltDMm = 10f;
+        public float RimReliefMm = 0.10f;       // disc rim sits this much
+                                                // below the blade platform —
+                                                // the platform forms the gas
+                                                // path, the rim does not
+
+        /// <summary>Fir-tree blade retention (contract `assembly.firtree`).
+        /// The SAME parametric profile the CadQuery path uses; see
+        /// FirTree.cs and geometry_generator.firtree_profile.</summary>
+        public FirTreeParams FirTree = new FirTreeParams();
 
         public List<RowParams> Rows = new List<RowParams>();
 

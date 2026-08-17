@@ -77,8 +77,8 @@ parts — turbojet construction, split where real bolted joints sit:
 | Part | Exported File | Content |
 |---|---|---|
 | **Drive shaft** | `<Name>_Shaft.stl` | Shaft with mounting stubs past both ends and center bore |
-| **Bladed disc** ×N | `<Name>_RotorStage{i}.stl` | Disc web + hub flow-path shell segment (incl. spacer under its stator) + rotor blades of stage i |
-| **Casing ring** ×N | `<Name>_StatorRing{i}.stl` | Casing shell segment + stator vanes; first/last rings carry the bolted flanges; the bleed-stage ring carries the bleed port |
+| **Bladed disc** ×N | `<Name>_RotorStage{i}.stl` | Disc (bore fit, web, rim following the hub line, broached fir-tree slots, tie-bolt circle) + hub flow-path shell between disc bands + rotor blades of stage i, each with its fir-tree root |
+| **Casing ring** ×N | `<Name>_StatorRing{i}.stl` | Casing shell segment + stator vanes; a bolted flange at EACH end of every ring (they bolt to one another); the bleed-stage ring carries the bleed port |
 | **Rotor / Casing** (views) | `<Name>_Rotor.stl` / `<Name>_Casing.stl` | Unions in running position |
 | **Assembly** (view) | `<Name>.stl` | Everything (for inspection only) |
 
@@ -192,7 +192,7 @@ C# phase outputs: one STL per part plus the union views (binary, in mm).
 | `AxialCompressorDesigner.Example/` | 5c | Executable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | product | End-to-end CLI: spec → design → geometry → report → dataset [→ STLs via --stl/--voxel]. |
 | `contract_schema.py` | 5a | Published JSON Schema of `phyac-axial-2` + dependency-free validator (also a CLI: `python contract_schema.py <contract>`). |
-| `test_phyac.py` | VV&UQ | Verification suite: 149 checks (triangles, conservation, g continuity, profiles, contract schema, disc solver, optimizer core, L1 spool, assembly interference). |
+| `test_phyac.py` | VV&UQ | Verification suite: 153 checks (triangles, conservation, g continuity, profiles, contract schema, disc solver, optimizer core, L1 spool, assembly interference). |
 | `validation/` | VV&UQ | Validation campaign vs NASA Stage 35, Rotor 37/67 and GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## Python API (layers 1–5b)
@@ -292,7 +292,7 @@ Phy-AC/
 ├── report_generator.py                   layer 5b  self-contained HTML report
 ├── visualization.py                      layer 5b  matplotlib figures (optional)
 ├── phyac_cli.py                          end-to-end CLI (spec → design → report [→ STLs])
-├── test_phyac.py                         verification suite (149 checks)
+├── test_phyac.py                         verification suite (153 checks)
 │
 ├── schemas/                              published JSON Schema of the contract
 ├── validation/                           validation campaign (machines.py, validate.py)
@@ -309,7 +309,9 @@ Phy-AC/
 │       ├── PhyACImport.cs                ★ Phy-AC bridge: contract → parameters
 │       ├── AxialCompressor.cs            multi-part assembly + split planes
 │       ├── BladeRow.cs                   camber-sheet blade rows (voxMeshShell)
-│       ├── RotorDrum.cs                  shaft, hub shell segments, disc webs
+│       ├── RotorDrum.cs                  shaft, hub shell segments, discs (fir-tree slots, tie bolts)
+│       ├── FirTree.cs                    fir-tree retention (port of firtree_profile)
+│       ├── ParityReport.cs               machine-readable dump for the STL↔STEP parity test
 │       ├── Casing.cs                     shell segments, flanges, bleed port
 │       ├── LatticeUtils.cs               solid primitives (box, cylinder, revolve)
 │       └── LocalFrame.cs                 coordinate frames + vector helpers
@@ -378,10 +380,11 @@ independent voxel fields built in the same `Library.Go` session.
 ## Verification and Validation
 
 ```bash
-python test_phyac.py               # verification: 149 checks
+python test_phyac.py               # verification: 153 checks
 python validation/validate.py      # validation: NASA machines → RESULTS.md
 python data_pipeline.py            # data anchors: rebuild + SHA-256 verify
 python contract_schema.py runs/x/geometry/axial_compressor.json   # contract
+python validation/parity_stl_step.py runs/x/geometry/axial_compressor.json 0.6   # STL vs STEP
 ```
 
 With the optional extras installed, `PHYAC_REQUIRE_STEP=1` and
@@ -441,6 +444,29 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
 
 ## History
 
+- **2026-08-16 — layer 5c matches the CadQuery route again (phase 10 ·
+  G-01)**: the STL (manufacturing route) and the STEP (re-CAD route) had
+  drifted into describing different machines. Ported to C#: the
+  **fir-tree retention** (`FirTree.cs`, a line-by-line port of
+  `firtree_profile` and `_cq_firtree_solid` — profile, 5-section loft,
+  inclined broaching, hub-following platform), **trimming each row
+  against the annulus** instead of laying it on its section radii,
+  **running clearances** by the contract's convention, the **disc**
+  (bore fit, web, rim following the hub line with its relief, broached
+  slots, common tie-bolt circle, drum shell stopping at the disc band)
+  and **`tie_bolt_count`/`tie_bolt_d_mm`**. Two things fixed along the
+  way: the STL casing rings only had flanges at the two ends of the
+  machine, so the printed rings could not actually be bolted together;
+  and the CadQuery casing had no bleed port, which the contract has
+  declared since phase 7. `validation/parity_stl_step.py` now measures
+  the two routes against each other — **Shaft −0.1 %, Rotor −1.1 %,
+  Casing −0.7 %** in volume and outer radii within 0.4 mm (2-stage
+  machine, voxel 0.6 mm, root fillet off on both sides). The cheap half
+  of that comparison runs in every suite pass and in CI. It also measured
+  something worth flagging: the 5c root-fillet pass adds **24 % of a
+  casing ring's volume** for a 2 mm fillet — see docs/VALIDATION.md.
+  Verification 149 → 153 checks.
+
 - **2026-08-16 — versioned contract, assembly interference check and a
   CI that covers them (phase 10)**: three things that all existed on
   paper and none of which a machine checked. (a) **The contract is
@@ -467,7 +493,7 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
   `requests`, and `_scm_solve` spawned its worker through
   multiprocessing, which on Windows re-imports the caller's `__main__` —
   so any script without a `__main__` guard timed out into L0 without a
-  word. Both fixed. Verification 112 → 149 checks.
+  word. Both fixed. Verification 112 → 153 checks.
 
 - **2026-08-16 — physics of range and real gas (phase 9)**: the loss
   bookkeeping was rebuilt on cited mechanism instead of tuned constants.

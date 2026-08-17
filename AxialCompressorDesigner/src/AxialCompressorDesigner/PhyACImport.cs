@@ -101,6 +101,32 @@ namespace AxialCompressorDesigner
                 p.BleedHoleDMm = fOpt(oAsm, "bleed_hole_d_mm", p.BleedHoleDMm);
                 p.BleedBossDMm = fOpt(oAsm, "bleed_boss_d_mm", p.BleedBossDMm);
                 p.BleedBossHMm = fOpt(oAsm, "bleed_boss_h_mm", p.BleedBossHMm);
+                p.TieBoltCount = (int)fOpt(oAsm, "tie_bolt_count",
+                                           p.TieBoltCount);
+                p.TieBoltDMm = fOpt(oAsm, "tie_bolt_d_mm", p.TieBoltDMm);
+                p.RimReliefMm = fOpt(oAsm, "rim_relief_mm", p.RimReliefMm);
+
+                // Fir-tree retention. A contract without the block builds
+                // the legacy sunk root: Enabled stays false and nothing
+                // downstream changes. `required` in phyac-axial-2 covers
+                // the block, so this only triggers on hand-edited files.
+                if (oAsm.TryGetProperty("firtree", out JsonElement oFt)
+                    && oFt.ValueKind == JsonValueKind.Object)
+                {
+                    FirTreeParams ft = p.FirTree;
+                    ft.Enabled = oFt.TryGetProperty("enabled",
+                                                    out JsonElement eEn)
+                                 && eEn.GetBoolean();
+                    ft.NTeeth = (int)fOpt(oFt, "n_teeth", ft.NTeeth);
+                    ft.WTopMm = fOpt(oFt, "w_top_mm", ft.WTopMm);
+                    ft.DepthMm = fOpt(oFt, "depth_mm", ft.DepthMm);
+                    ft.TaperDeg = fOpt(oFt, "taper_deg", ft.TaperDeg);
+                    ft.LobeFrac = fOpt(oFt, "lobe_frac", ft.LobeFrac);
+                    ft.ClearanceMm = fOpt(oFt, "clearance_mm",
+                                          ft.ClearanceMm);
+                    ft.AxialFrac = fOpt(oFt, "axial_frac", ft.AxialFrac);
+                    ft.MinWidthMm = fOpt(oFt, "min_width_mm", ft.MinWidthMm);
+                }
             }
 
             foreach (JsonElement oStage in oRoot.GetProperty("stages").EnumerateArray())

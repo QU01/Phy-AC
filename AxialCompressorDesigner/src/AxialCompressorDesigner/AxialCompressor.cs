@@ -38,6 +38,8 @@ namespace AxialCompressorDesigner
                 (row.Rotating ? m_aRotors : m_aStators).Add(row);
             m_aRotors.Sort((a, b) => a.ZCenterMm.CompareTo(b.ZCenterMm));
             m_aStators.Sort((a, b) => a.ZCenterMm.CompareTo(b.ZCenterMm));
+            m_fTieBoltR = m_aRotors.Count > 0
+                ? RotorDrum.fTieBoltRadius(p, m_aRotors) : 0f;
         }
 
         public int nStages => m_aRotors.Count;
@@ -94,15 +96,34 @@ namespace AxialCompressorDesigner
             float fZ0 = i == 0 ? m_p.HubLine[0][0] : fSplitAfter(i - 1);
             float fZ1 = i == nStages - 1
                 ? m_p.HubLine[m_p.HubLine.Length - 1][0] : fSplitAfter(i);
-            Voxels vox = RotorDrum.voxHubShellSegment(m_p, fZ0, fZ1);
-            vox += RotorDrum.voxDiscWeb(m_p, m_aRotors[i]);
-            vox += BladeRow.voxBuildRow(m_aRotors[i], m_p.TipClearanceMm,
-                                        m_p.RootSinkMm, m_fMinThick);
+            RowParams row = m_aRotors[i];
+
+            // The drum shell stops at the disc band: inside it the disc
+            // rim closes the flow path. Running the shell straight through
+            // the rim was worth 53 cm³ of shared material per stage in the
+            // CadQuery route before phase 10 found it.
+            RotorDrum.DiscBand(m_p, row, out float fBLo, out float fBHi);
+            Voxels vox = null;
+            if (fBLo - fZ0 > 0.5f)
+                vox = RotorDrum.voxHubShellSegment(m_p, fZ0, fBLo);
+            if (fZ1 - fBHi > 0.5f)
+            {
+                Voxels voxAft = RotorDrum.voxHubShellSegment(m_p, fBHi, fZ1);
+                vox = vox == null ? voxAft : vox + voxAft;
+            }
+
+            Voxels voxDisc = RotorDrum.voxDisc(m_p, row, fTieBoltR);
+            vox = vox == null ? voxDisc : vox + voxDisc;
+            vox += BladeRow.voxBuildRow(m_p, row, m_fMinThick);
             return voxWithRootFillets(vox, new List<(RowParams, bool)>
             {
-                (m_aRotors[i], true),
+                (row, true),
             });
         }
+
+        /// <summary>Tie-bolt circle radius, common to the whole stack.</summary>
+        public float fTieBoltR => m_fTieBoltR;
+        readonly float m_fTieBoltR;
 
         // ── static parts ──────────────────────────────────────────────
         public Voxels voxStatorRing(int i)
@@ -114,18 +135,20 @@ namespace AxialCompressorDesigner
             float fZ1 = i == nStages - 1 ? fZC1 : fSplitAfter(i);
 
             Voxels vox = Casing.voxShellSegment(m_p, fZ0, fZ1);
-            if (i == 0)
-                vox += Casing.voxFlange(m_p, fZC0, bForward: true);
-            if (i == nStages - 1)
-                vox += Casing.voxFlange(m_p, fZC1, bForward: false);
+            // A flange at EACH end of EVERY ring, not just at the two ends
+            // of the machine: the rings bolt to one another, and rings
+            // printed without an internal flange cannot be assembled — the
+            // split planes existed but the joints did not. This is what
+            // the CadQuery route has always built.
+            vox += Casing.voxFlange(m_p, fZ0, bForward: true);
+            vox += Casing.voxFlange(m_p, fZ1, bForward: false);
             if (i + 1 == Math.Clamp(m_p.BleedStage, 1, nStages))
             {
                 float fZB = m_aStators[i].ZCenterMm;
                 vox += Casing.voxBleedBoss(m_p, fZB);
                 vox -= Casing.voxBleedHole(m_p, fZB);
             }
-            vox += BladeRow.voxBuildRow(m_aStators[i], m_p.TipClearanceMm,
-                                        m_p.RootSinkMm, m_fMinThick);
+            vox += BladeRow.voxBuildRow(m_p, m_aStators[i], m_fMinThick);
             var aFilletRows = new List<(RowParams, bool)>
             {
                 (m_aStators[i], false),
@@ -134,14 +157,12 @@ namespace AxialCompressorDesigner
             // from the last one (casing-mounted like any stator row)
             if (i == 0 && m_p.IgvRow != null)
             {
-                vox += BladeRow.voxBuildRow(m_p.IgvRow, m_p.TipClearanceMm,
-                                            m_p.RootSinkMm, m_fMinThick);
+                vox += BladeRow.voxBuildRow(m_p, m_p.IgvRow, m_fMinThick);
                 aFilletRows.Add((m_p.IgvRow, false));
             }
             if (i == nStages - 1 && m_p.OgvRow != null)
             {
-                vox += BladeRow.voxBuildRow(m_p.OgvRow, m_p.TipClearanceMm,
-                                            m_p.RootSinkMm, m_fMinThick);
+                vox += BladeRow.voxBuildRow(m_p, m_p.OgvRow, m_fMinThick);
                 aFilletRows.Add((m_p.OgvRow, false));
             }
             return voxWithRootFillets(vox, aFilletRows);
