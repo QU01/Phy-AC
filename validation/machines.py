@@ -158,7 +158,12 @@ MACHINES = [
 #   speed_frac  fracción de velocidad de diseño del punto medido
 #   measured    dict de cantidades medidas. Soportadas:
 #                 mdot_choke        gasto de choke [kg/s] a esa velocidad
-#                 stall_over_choke  ṁ_stall / ṁ_choke (ancho del mapa)
+#                 mdot_stall        gasto de bombeo [kg/s] (DERIVADO de
+#                                   los dos anteriores: 0.925 × 20.93)
+#                 stall_over_choke  ṁ_stall / ṁ_choke (ancho del mapa).
+#                                   Este ratio COMPONE los errores de sus
+#                                   dos extremos: conviene mirarlo junto a
+#                                   los absolutos, no en lugar de ellos.
 #   tol         tolerancia OBJETIVO (lo que un meanline debería lograr)
 #   guard       tolerancia INTERINA con la que --strict no falla mientras
 #               la brecha esté documentada y abierta (mismo mecanismo que
@@ -177,9 +182,20 @@ OFFDESIGN = [
     dict(
         machine="NASA Rotor 37",
         speed_frac=1.0,
-        measured=dict(mdot_choke=20.93, stall_over_choke=0.925),
-        tol=dict(mdot_choke_rel=0.05, stall_over_choke_rel=0.03),
-        guard=dict(mdot_choke_rel=0.12, stall_over_choke_rel=0.06),
+        measured=dict(mdot_choke=20.93, stall_over_choke=0.925,
+                      mdot_stall=19.36),
+        tol=dict(mdot_choke_rel=0.05, stall_over_choke_rel=0.03,
+                 mdot_stall_rel=0.05),
+        guard=dict(mdot_choke_rel=0.12, stall_over_choke_rel=0.06,
+                   mdot_stall_rel=0.08),
+        speedline_note=(
+            "ṁ_choke = 20.93 kg/s es INFERIDO, no medido: a velocidad de "
+            "diseño el difusor de la instalación bloqueaba antes que el "
+            "rotor, así que el máximo MEDIDO fue 20.90 kg/s y el 20.93 "
+            "sale de CFD del rotor aislado más ensayos de la etapa "
+            "completa (Suder, NASA TM 107310 §4.1.1). Se usa el 20.93 "
+            "porque es la cifra que canoniza el caso test; la diferencia "
+            "(0.14%) es menor que cualquier tolerancia en juego."),
         source=("AGARD AR-355 (Dunham ed., 1998), §2.1.4.1 «Test "
                 "Conditions»: «This near stall flow rate was "
                 "experimentally determined to be ṁ/ṁ_choke = 0.925 [...] "
@@ -196,8 +212,74 @@ OFFDESIGN = [
                "por debajo. Es exactamente lo que el margen de bombeo "
                "—restricción dura desde la fase 9— pone en juego, y hasta "
                "ahora no estaba contrastado con ningún dato medido."),
+        speedline="R37_100N",
     ),
 ]
+
+
+# ---------------------------------------------------------------------------
+# SPEEDLINE medida — la característica completa, no solo sus extremos
+# ---------------------------------------------------------------------------
+# El AGARD publica los 13 puntos como FIGURA, pero NASA los publica como
+# TABLA: el paquete de datos experimentales del Turbulence Modeling
+# Resource, `rotor 37 exp data.xlsx`, hoja «map data», filas 22-34
+# («rotor 37, 100% spd», cabeceras `lbm/sec | pr | tr | eta`). Los valores
+# de abajo son VERBATIM de ese fichero; la conversión a kg/s
+# (×0.45359237) y la normalización por ṁ_choke son aritmética nuestra.
+#
+# Las etiquetas «choked», «peak eff.» y «near stall» también son del
+# fichero, y caen donde el AGARD dice que caen (0.98 y 0.925).
+#
+# Verificación independiente: estos 13 puntos se digitalizaron ANTES por
+# separado desde las Figuras 2.4 y 3.1/3.2 del AGARD, y el acuerdo con la
+# tabla de NASA es ≤0.003 en PR y ≤0.001 en η — dentro de la
+# incertidumbre que aquella digitalización se había declarado. Dos
+# caminos independientes dan lo mismo.
+#
+# ATENCIÓN con ṁ_choke = 20.93 kg/s. El AGARD lo presenta como medido
+# («as determined by NASA»), pero la tesis de Suder (NASA TM 107310,
+# §4.1.1) es explícita en que es INFERIDO: a velocidad de diseño el
+# DIFUSOR de la instalación bloqueaba antes que el rotor, así que el
+# máximo MEDIDO fue 20.90 kg/s y el 20.93 sale de CFD del rotor aislado
+# más ensayos de la etapa completa. «the rotor is not choked at the
+# highest mass flow rate in Figure 12». La entrada de OFFDESIGN sigue
+# usando 20.93 porque es la cifra que el caso test canoniza, pero la
+# diferencia (0.14%) es menor que cualquier tolerancia en juego y queda
+# anotada aquí para que nadie la tome por una medida directa.
+SPEEDLINES = {
+    "R37_100N": dict(
+        machine="NASA Rotor 37",
+        speed_frac=1.0,
+        mdot_choke=20.93,
+        source=("NASA Turbulence Modeling Resource, paquete experimental "
+                "del Rotor 37 (`rotor 37 exp data.xlsx`, hoja «map data», "
+                "filas 22-34; rotor37-exp.zip alojado por NASA, "
+                "curado por Vogel y Pederson, act. 2026-01-05). Valores "
+                "VERBATIM. Corroborado por digitalización independiente "
+                "de AGARD AR-355 Figs. 2.4 y 3.1/3.2 (ΔPR ≤ 0.003, "
+                "Δη ≤ 0.001)."),
+        #    ṁ [lbm/s]  ṁ [kg/s]   PR      TR       η_ad   etiqueta
+        points=[
+            (46.032, 20.880, 1.995, 1.2451, 0.890, "choked"),
+            (45.920, 20.829, 1.992, 1.2448, 0.889, ""),
+            (45.881, 20.811, 2.018, 1.2493, 0.891, ""),
+            (45.559, 20.665, 2.065, 1.2595, 0.887, ""),
+            (45.320, 20.557, 2.071, 1.2630, 0.879, ""),
+            (45.238, 20.520, 2.084, 1.2656, 0.879, "peak eff."),
+            (44.610, 20.235, 2.099, 1.2706, 0.872, ""),
+            (44.389, 20.135, 2.110, 1.2718, 0.875, ""),
+            (44.220, 20.058, 2.114, 1.2747, 0.868, ""),
+            (43.670, 19.808, 2.128, 1.2797, 0.861, ""),
+            (43.663, 19.805, 2.135, 1.2807, 0.862, ""),
+            (42.790, 19.409, 2.141, 1.2858, 0.850, "near stall"),
+            (42.747, 19.390, 2.144, 1.2871, 0.848, ""),
+        ],
+        # El fichero NO trae bandas de incertidumbre. La «±1.0% en PR» que
+        # circula citada como tal es la Tabla 5 de Suder, que es el
+        # objetivo de PRECISIÓN DESEADA PARA CFD, no el error de medida.
+        unc=None,
+    ),
+}
 
 
 # ---------------------------------------------------------------------------

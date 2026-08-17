@@ -212,8 +212,8 @@ def run_offdesign(o: dict) -> dict:
         mdot_surge, _srg = pc._surge_mdot(theta, rpm, rec["frozen"], mdot_d,
                                           mdot_choke)
         model = dict(mdot_choke=mdot_choke,
-                     stall_over_choke=mdot_surge / max(mdot_choke, 1e-9),
-                     mdot_surge=mdot_surge)
+                     mdot_stall=mdot_surge,
+                     stall_over_choke=mdot_surge / max(mdot_choke, 1e-9))
     finally:
         pc.TIP_CLEARANCE_MM = eps_saved
 

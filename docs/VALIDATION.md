@@ -55,9 +55,8 @@ transónico es el resultado más importante de esta fase.
 
 **El criterio de CHOKE no**: el modelo deja pasar un 6.6% más de gasto
 del que la máquina traga. `MX_CHOKE = 0.78` declara choke cuando el Mach
-AXIAL de la estación llega a 0.78, y en un rotor transónico (M_rel de
-punta 1.49) la garganta del pasaje se bloquea mucho antes. El efecto es
-sistemático y crece con el Mach relativo:
+AXIAL de la estación llega a 0.78, que no es un criterio de choke sino un
+umbral. El efecto es sistemático y crece con el Mach relativo:
 
 | Máquina | M_rel punta | ṁ_choke/ṁ_diseño modelo |
 |---|---|---|
@@ -68,21 +67,83 @@ sistemático y crece con el Mach relativo:
 
 Consecuencia práctica: el mapa está desplazado hacia gastos altos por el
 lado del choke, así que el ANCHO de la speedline sale optimista aunque la
-posición relativa del bombeo sea correcta. Arreglarlo es un criterio de
-garganta con Mach RELATIVO (pendientes G-09 y F-07), no un ajuste de
-constante — y exige revalidar las cuatro máquinas y las anclas, así que
-no se hace de paso.
+posición relativa del bombeo sea correcta.
+
+#### Intento de arreglo (G-09) y por qué NO se ha shipeado
+
+Se implementó y se midió el criterio físico: la fila bloquea cuando por
+su GARGANTA pasa el gasto sónico en el marco relativo, con el área de
+garganta como geometría congelada del álabe
+(A_g = Σ_span N·(s·cosβ_g − t_g)·dr) integrada en el span, porque β₁
+crece hacia la punta y evaluarla solo en la línea media daba gargantas
+por debajo del gasto de diseño de máquinas que corren.
+
+Funciona — y a la vez no. Con la garganta en el borde de ataque
+(fracción de comba girada = 0) el Rotor 37 cae EXACTO sobre la medida
+(1.037), pero el Rotor 67 y el E³ salen a 0.967 y 0.983: el modelo
+declara bloqueadas al 100% dos máquinas que existen y funcionan. Abriendo
+la garganta (llevándola aguas abajo, donde el álabe ya ha girado parte de
+la comba) las otras dos se recuperan pero el Rotor 37 se dispara:
+
+| comba girada en la garganta | Stage 35 | **Rotor 37** | Rotor 67 | E³ | espacio factible |
+|---|---|---|---|---|---|
+| 0.0 | 1.005 | **1.037** ✓ | 0.967 ✗ | 0.983 ✗ | 11% |
+| 0.1 | 1.065 | **1.113** ✗ | 1.024 | 1.035 | 16% |
+| 0.2 | 1.123 | **1.187** ✗ | 1.077 | 1.083 | 16% |
+| 0.3 | 1.179 | **1.259** ✗ | 1.124 | 1.127 | 16% |
+
+(medido para el Rotor 37: 1.037)
+
+**Ningún valor satisface a la vez la medida del Rotor 37 y el requisito
+de que las otras tres cierren.** No es un problema de ajuste sino de
+estructura: el Rotor 37 tiene la línea media SUPERSÓNICA en relativo
+(M_rel = 1.30) mientras que el Rotor 67 y el E³ están en 0.96. El
+criterio de garganta sónica es la física correcta para entrada
+SUBSÓNICA; para entrada supersónica el gasto lo fija la INCIDENCIA ÚNICA
+y la condición de pasaje arrancado, que es otro criterio y bastante más
+restrictivo.
+
+O sea: G-09 necesita las DOS ramas, y la supersónica es F-07 de verdad
+(la onda de choque del pasaje). Con un solo dato medido en la rama
+supersónica, montarla ahora sería ajustar a una máquina. El código del
+intento no se conserva; lo que se conserva es esta medida, que es lo que
+ahorra el trabajo la próxima vez.
+
+Mientras tanto sigue vigente `MX_CHOKE = 0.78` con su +6.6% documentado.
 
 Mientras tanto `--strict` corre contra una guarda interina (±12% en
 choke, ±6% en el ratio), igual que la guarda de η: el CI no se queda rojo
 por una brecha documentada y abierta, pero el objetivo real (±5%) se
 reporta siempre.
 
-**Lo que falta para cerrar F-02**: el PR de pico y la PENDIENTE de la
-speedline. El AGARD las publica como la Figura 2.4 (curvas de PR y η
-frente a ṁ/ṁ_choke), no como tabla; los 13 puntos medidos hay que
-pedírselos a NASA (§2.1.5). Y falta velocidad parcial: todo lo anterior
-es al 100%.
+#### Los 13 puntos ya están en el repo
+
+El AGARD publica la característica como figura, pero **NASA la publica
+como tabla**: el paquete experimental del Turbulence Modeling Resource
+(`rotor 37 exp data.xlsx`, hoja «map data»). Los 13 puntos al 100% de
+velocidad —gasto, PR, TR y η, con las etiquetas «choked», «peak eff.» y
+«near stall»— están en `machines.py` bajo `SPEEDLINES["R37_100N"]`,
+VERBATIM del fichero. Se corroboraron además digitalizando por separado
+las Figuras 2.4 y 3.1/3.2 del AGARD: los dos caminos, independientes,
+coinciden dentro de 0.003 en PR y 0.001 en η.
+
+Con eso, calificar el **PR de pico** y la **PENDIENTE** de la speedline
+—las otras dos preguntas de F-02— ya no depende de conseguir datos, solo
+de escribir la comparación punto a punto.
+
+Un aviso que salió al buscarlos: **ṁ_choke = 20.93 kg/s es INFERIDO, no
+medido.** El AGARD lo presenta como «as determined by NASA», pero la
+tesis de Suder (NASA TM 107310, §4.1.1) es explícita: a velocidad de
+diseño el DIFUSOR de la instalación bloqueaba antes que el rotor, el
+máximo medido fue 20.90 kg/s, y el 20.93 sale de CFD del rotor aislado
+más ensayos de la etapa completa. La diferencia (0.14 %) es menor que
+cualquier tolerancia en juego, pero un dato y una inferencia no son lo
+mismo y conviene que esté escrito.
+
+**Lo que falta para cerrar F-02**: (a) las dos ramas del criterio de
+choke (arriba); (b) la comparación punto a punto contra los 13 valores,
+que ya están en el repo; (c) velocidad PARCIAL — todo lo anterior es al
+100 %, y ahí es donde viven los VSV y el sangrado.
 
 Tabla viva en `validation/RESULTS.md` (regenerar tras tocar
 `physics_core.py`).
