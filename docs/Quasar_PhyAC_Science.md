@@ -15,7 +15,7 @@ implemented in the code, with references. It is the axial counterpart of
 
 1. [Inverse Design Problem Formulation](#1-inverse-design-problem-formulation)
 2. [Layer 1 · Physics L0: Stage-Stacking Meanline](#2-layer-1--physics-l0-stage-stacking-meanline)
-3. [Layer 1 · Physics L1: TD3 Axial Spool and Patches](#3-layer-1--physics-l1-td3-axial-spool-and-patches)
+3. [Layer 1 · Physics L1: Streamline-Curvature Through-Flow](#3-layer-1--physics-l1-streamline-curvature-through-flow)
 4. [Layer 1 · Multi-Fidelity Calibration (L2)](#4-layer-1--multi-fidelity-calibration-l2)
 5. [Layer 1s · Structural Core](#5-layer-1s--structural-core)
 6. [Layer 0 · Public Data Policy](#6-layer-0--public-data-policy)
@@ -383,58 +383,128 @@ top of the frozen-geometry model:
 
 ---
 
-## 3. Layer 1 · Physics L1: TD3 Axial Spool and Patches
+## 3. Layer 1 · Physics L1: Streamline-Curvature Through-Flow
 
-### 3.1 The Method
+### 3.1 Why this replaced TD3 (phase 11)
 
-`turbo-design` (NASA TD3) solves the compressible marching of a
-multi-row spool over the real annulus. Phy-AC builds the passage from the
-L0 stations (including rotor-exit areas) and one rotor + one stator row
-per stage, extracts PR and τ, and derives η_poly. L1 overwrites only
-PR/η in the record; everything else (g, stage table) stays L0.
+Until phase 11, "L1" was `turbo-design` 1.4.2 with three monkey-patches,
+run with `num_streamlines=1` **because with more the library's
+radial-equilibrium ODE collapsed its step and hung**. That is: L1 was
+another meanline. It ran in a timeout-guarded subprocess because of those
+hangs, and in practice it was dead in silence — the package does not
+declare `requests`, so the import failed and the whole system ran at L0
+believing it ran at L1 (found by the first test ever written for that
+path; see docs/VALIDATION.md).
 
-### 3.2 The Patches and Findings (De Facto Proprietary Knowledge)
+A fidelity ladder with one real rung is not a ladder. The residual deep
+ensemble of layer 2 had no residual to learn (it short-circuits under
+L0), and the affine L2 calibration was an API waiting for a user.
 
-Verified on TD3 **1.4.2** (spike M7, 2026-07-11), applied lazily at
-import with graceful degradation to L0:
+`scm_core.py` replaces it: a through-flow solver of our own, no external
+dependency, running in-process.
 
-1. **Frustum area patch** (inherited from Phy-CC):
-   `compute_streamline_areas` squares dx and allows negative areas; the
-   conical-frustum form degenerates correctly to a cylinder for axial
-   passages (dr ≈ 0), so one patch serves both machine types.
-2. **`stator_calc` Yp coercion**: with a non-Pressure loss on stator
-   rows, `row.Yp[:] = 0` crashes when Yp arrives as a 0-d scalar. The
-   patch coerces to a 1-d array — and must be applied to BOTH
-   `compressor_math` and the **by-name import** in `compressor_spool`.
-3. **Meanline mode is mandatory** (`num_streamlines=1`): with more
-   streamlines the radial-equilibrium ODE (`radeq`, RK45) collapses its
-   step size and hangs indefinitely.
-4. **Work-preserving stage transform**: TD3's pressure-balance marching
-   does **not** propagate upstream swirl into the rotor's Euler work
-   (each rotor effectively sees axial inflow). Each stage is therefore
-   transformed conserving work: axial inlet, rotor exit swirl
-   $C_{u2}^{eff} = \psi U$, stator back to axial. A damped outer loop
-   (relaxation 0.5, ≤6 iterations) corrects the equivalent exit angle
-   with TD3's actual Cx — the work↔density↔Cx coupling diverges without
-   relaxation. τ then matches L0 to 3 decimals by construction.
-5. **Loss imposition**: `FixedPressureLoss` with the L0 ω̄ rescaled to
-   TD3's reference (the *upstream row's* dynamic head; relative frame for
-   rotors). The Polytropic loss type is unreachable by TD3's internal Yp
-   optimizer on axial spools (the upstream head bounds the achievable
-   ΔP0 loss). Sign convention: rotor metal exit angles **negative**,
-   stator positive (cf. TD3's own turbine example).
-6. **Hard per-solve timeout** (`PHYAC_L1_TIMEOUT`, default 180 s): the
-   massflow-convergence loop can hang; each solve runs in a spawned
-   subprocess that is terminated on timeout and degrades to tagged L0.
+### 3.2 The equation
 
-### 3.3 Protocol for L1 Usage in Phy-AC
+Along a radial quasi-orthogonal, with $h_0$ the stagnation enthalpy, $s$
+the entropy and $r_c$ the meridional radius of curvature:
 
-L1 runs only on **feasible** points (the L0 g gates it), results outside
-the sanity window $[0.70, 1.40]\cdot PR_{L0}$ are discarded as
-divergence. Measured on feasible LHS samples: **95% solve success, PR
-correlation r = 0.955, systematic ratio PR_L1/PR_L0 ≈ 0.94** — a level
-bias absorbed by the affine calibration (§4), exactly the role L1 plays
-in the multi-fidelity ladder.
+$$C_m\frac{\partial C_m}{\partial r}
+  = \frac{\partial h_0}{\partial r}
+  - T\frac{\partial s}{\partial r}
+  - \frac{C_u}{r}\frac{\partial (rC_u)}{\partial r}
+  - \frac{C_m^2\cos\gamma}{r_c}$$
+
+which follows from combining $dh = T\,ds + dp/\rho$ with the normal
+equilibrium $\frac{1}{\rho}\frac{\partial p}{\partial r}
+= \frac{C_u^2}{r} + \frac{C_m^2\cos\gamma}{r_c}$. Sign convention:
+$1/r_c > 0$ when the centre of curvature sits at *smaller* radius, i.e.
+$1/r_c = -r''/(1+r'^2)^{3/2}$ and $\cos\gamma = 1/\sqrt{1+r'^2}$.
+
+With zero curvature and $C_u \propto r^n$ this integrates to the closed
+form of §2.2 (`physics_core.vortex_cx`),
+
+$$C_x^2(r) = C_{x,m}^2 - C_{u,m}^2\frac{n+1}{n}
+  \left[\left(\frac{r}{r_m}\right)^{2n} - 1\right],$$
+
+and the verification test T21 checks exactly that: the numerically
+integrated ODE reproduces the analytic profile to $2\times10^{-16}$ for
+free vortex and to $\sim2\times10^{-3}$ (trapezoid discretisation over 9
+points) for $n = -0.5,\,0,\,+0.5$. The SCM is therefore an **extension**
+of the phase-9.1 model, not a parallel one.
+
+### 3.3 Closure and what actually gets solved
+
+The blade is a **fixed object in space**: its metal angles $\beta_2(r)$
+and $\alpha_{out}(r)$ come from the design vortex law and are frozen. The
+solver then finds the field $(C_m, C_u, \rho)$ that simultaneously
+satisfies
+
+1. radial equilibrium at every station,
+2. global continuity **and** continuity per streamtube (the streamlines
+   are placed by mass fraction, not by radius),
+3. the angle the blade imposes at each trailing edge,
+   $C_{u2} = U - C_m\tan\beta_2$,
+4. **Euler per streamline**, $\Delta h_0 = \omega\,(r_2C_{u2} -
+   r_1C_{u1})$ — the work stops being uniform across the span, which is
+   precisely what the meanline cannot see.
+
+Stations sit at the leading and trailing edge of every row ($2n+1$ of
+them for $n$ stages); the annulus is the same one layer 5a builds, so the
+SCM solves the flow in the machine that gets manufactured.
+
+Losses are resolved across the span: each streamline pays its own
+diffusion, its own Reynolds and its own Mach through the same
+`_row_losses` the meanline uses; the shock is only paid where the
+relative Mach justifies it; tip clearance is concentrated in the outer
+25% of span and the Koch & Smith end-wall debit in the wall bands,
+instead of being smeared uniformly.
+
+### 3.4 Numerics and honest failure
+
+Outer loop: reposition streamlines by mass fraction, update meridional
+curvature (lagged one iteration — implicit curvature is what
+destabilises), repeat until the radii move less than $10^{-5}$
+relative. Inner loop per station: the radial-equilibrium integral fixes
+the *shape* of $C_m$, and the *level* comes from bisecting global
+continuity — bracketed by the **sonic limit**, because mass flow only
+grows with $C_m$ on the subsonic branch and a blind bisection lands on
+the supersonic one (measured once: PR = 0.19 with an exit $T_0$ below
+inlet).
+
+Two failure modes are reported, never swallowed:
+
+* **choked station** — not even at the sonic limit does the annulus pass
+  the required mass flow;
+* **profile limiter still active at convergence** — the numerical clamp
+  on the $C_m$ profile (0.30–2.40 × its mean) is holding the answer
+  rather than the physics; the field would be kneaded by the limiter, so
+  it is refused.
+
+Either raises `SCMDiverged`; `evaluate` then degrades to L0 **with the
+reason in `source`**.
+
+### 3.5 What it costs and what it buys
+
+About 3 s per machine (4 stages, 9 streamlines, 15 outer iterations) —
+comparable to the old subprocess but now solving something real, and
+cacheable to `phys_cache.jsonl` like any L1 record. Measured against L0
+on the reference θ:
+
+| Vortex law | ΔPR vs L0 | Δη_poly | Span work spread |
+|---|---|---|---|
+| free ($n=-1$) | +0.13% | +0.34 pts | 6.9% |
+| controlled ($n=-0.5$) | −6.5% | −0.01 pts | 5.6% |
+
+The free-vortex row is **verification**: it is the case where the
+meanline's assumptions are exact, so agreement is the expected result.
+The controlled-vortex row is the **residual** the surrogate needs — and
+it also exposes something the meanline never accounted for: applying the
+vortex exponent to $C_{u1}$ and $C_{u2}$ alike makes the Euler work vary
+as $r^{n+1}$, so for $n \neq -1$ the design is a non-uniform-work design
+and the meanline only ever evaluated it at mid-span.
+
+Not yet qualified against measurement — the same open gap as the
+off-design map (docs/VALIDATION.md §5).
 
 ---
 
@@ -676,7 +746,7 @@ Measured on a laptop CPU:
 |---|---|
 | L0 meanline | ~0.5 ms/point |
 | g_struct (per-stage discs, Thomas O(n)) | ~1 ms/point |
-| L1 TD3 spool (subprocess incl. spawn) | ~4–6 s/point |
+| L1 streamline-curvature through-flow (in-process) | ~3 s/point |
 | Ensemble training (150–500 samples) | 5–20 s |
 | NSGA-II round over surrogate (96×60, with L0 per individual) | ~15 s |
 | Full quick run (L0) | ~1–2 min |
@@ -765,6 +835,5 @@ the machinery is the same.
   Algorithm: NSGA-II*. IEEE Trans. Evol. Comput. 6(2).
 - Lakshminarayanan, B., et al. (2017). *Simple and Scalable Predictive
   Uncertainty Estimation using Deep Ensembles*. NeurIPS.
-- NASA `turbo-design` (TD3) v1.4.2 — L1 spool solver.
 - OpenOrion `turbodesigner` (MIT) — layer-5a/5c design reference.
 - LEAP 71 `PicoGK` v2.2.0 — voxel geometry kernel (layer 5c).

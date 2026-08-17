@@ -681,12 +681,17 @@ def main(argv=None) -> int:
                    "(controlled vortex, not free)", "accent"))
     fidelity = Fidelity.L1 if args.fidelity == "L1" else Fidelity.L0
 
-    if fidelity == Fidelity.L1 and not l1_available():
-        print(ui.warn(f"turbo-design not available ({l1_unavailable_reason()})"))
-        print(ui.c("    → entire run will be L0 (meanline), tagged as "
-                   "'source'.", "dim"))
-        fidelity = Fidelity.L0
-        args.fidelity = "L0"
+    if fidelity == Fidelity.L1:
+        # L1 es propio desde la fase 11 y ya no puede faltar; lo que sí
+        # conviene decir es lo que CUESTA, porque antes la ausencia
+        # silenciosa de turbo-design lo hacía gratis: cada punto físico
+        # resuelve un through-flow de ~3 s. Un LHS de 320 puntos son ~15
+        # min de reloj con un worker.
+        n_pts = args.n_init + args.rounds * args.batch_size
+        mins = n_pts * 3.0 / 60.0 / max(args.workers, 1)
+        print(ui.c(f"  L1 through-flow: ~{n_pts} physical points "
+                   f"× ~3 s ≈ {mins:.0f} min with {args.workers} worker(s)"
+                   " — --fidelity L0 for a meanline-only run", "dim"))
 
     set_cache_path(os.environ.get("PHYAC_CACHE")
                    or os.path.join(args.outdir, "phys_cache.jsonl"))

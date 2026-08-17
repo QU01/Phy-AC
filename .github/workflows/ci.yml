@@ -3,10 +3,10 @@
 # verify  : verificación (test_phyac.py) + validación (validate.py --strict:
 #           PR/η vs máquinas NASA, anclas de regresión) en Linux y Windows,
 #           con las dependencias del núcleo FIJADAS.
-# full    : el mismo repo con los extras `step` (CadQuery) y `l1`
-#           (turbo-design) instalados, la suite en modo EXIGENTE — sin
-#           saltarse nada por dependencia ausente —, el CLI de punta a
-#           punta y el chequeo de interferencias del ensamble.
+# full    : el mismo repo con el extra `step` (CadQuery) instalado, la
+#           suite en modo EXIGENTE — sin saltarse nada por dependencia
+#           ausente —, el CLI de punta a punta y el chequeo de
+#           interferencias del ensamble.
 #           Es el job que cubre todo lo que la geometría detallada y la
 #           fidelidad L1 añadieron y que antes no se probaba en CI: sin él
 #           los tests de CAD se saltan solos y el job pasa en verde sin
@@ -46,9 +46,9 @@ jobs:
 
   full:
     # Tolerante a fallo MIENTRAS se estabiliza: la ausencia de ruedas de
-    # CadQuery/turbo-design para una versión de Python del runner no debe
-    # bloquear un PR de física. Quitar `continue-on-error` en cuanto el
-    # job encadene verdes — es el único que cubre CAD, L1 y CLI.
+    # CadQuery para una versión de Python del runner no debe bloquear un
+    # PR de física. Quitar `continue-on-error` en cuanto el job encadene
+    # verdes — es el único que cubre CAD y CLI de punta a punta.
     continue-on-error: true
     runs-on: ubuntu-latest
     steps:
@@ -56,21 +56,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install (pinned, all extras)
+      - name: Install (pinned, con el extra step)
         run: pip install -r requirements-ci.txt
 
       - name: Dependencies actually import
         run: |
           python -c "import cadquery; print('cadquery', cadquery.__version__)"
-          python -c "import physics_core as pc; ok = pc._try_load_turbodesign(); print('turbo-design', ok, pc._TD_REASON); raise SystemExit(0 if ok else 1)"
+          python -c "import physics_core as pc; print('L1', pc.l1_available(), pc.l1_unavailable_reason()); raise SystemExit(0 if pc.l1_available() else 1)"
 
-      # PHYAC_REQUIRE_* convierte en FALLO lo que en local es un SKIP: sin
-      # esto un runner sin CadQuery pasaría la suite entera en verde sin
-      # haber tocado la geometría detallada.
-      - name: Verification suite (CAD and L1 REQUIRED)
+      # PHYAC_REQUIRE_STEP convierte en FALLO lo que en local es un SKIP:
+      # sin esto un runner sin CadQuery pasaría la suite entera en verde
+      # sin haber tocado la geometría detallada. (L1 ya no necesita gate:
+      # desde la fase 11 es propio y no puede faltar.)
+      - name: Verification suite (CAD REQUIRED)
         env:
           PHYAC_REQUIRE_STEP: "1"
-          PHYAC_REQUIRE_L1: "1"
         run: python test_phyac.py
 
       - name: Contract schema — self-check

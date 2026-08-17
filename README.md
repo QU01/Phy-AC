@@ -99,7 +99,7 @@ python phyac_cli.py --interactive        # or -i
 # 1. Aerodynamic design — quick smoke run (~2 min, L0 fidelity):
 python phyac_cli.py --pr 4.0 --mdot 25 --quick --fidelity L0 --outdir runs/smoke
 
-#    Full run (with turbo-design installed, L1 verifies the winners):
+#    Full run (L1 through-flow verifies the winners):
 python phyac_cli.py --pr 4.0 --mdot 25 --rpm-max 18000 --utip-max 460 \
     --rtip-max 400 --rounds 5 --n-init 320 --outdir runs/pr4
 
@@ -180,7 +180,8 @@ C# phase outputs: one STL per part plus the union views (binary, in mm).
 
 | Module | Layer | Role |
 |---|---|---|
-| `physics_core.py` | 1 | Multi-fidelity physical core: L0 stage-stacking meanline (13-D θ, Lieblein/Howell/Koch correlations, per-row Reynolds correction, $g(\theta)$ ×8, off-design map), L1 turbo-design (TD3) axial spool with patches and per-solve timeout, L2 affine calibration, caching, physics features. |
+| `physics_core.py` | 1 | Multi-fidelity physical core: L0 stage-stacking meanline (15-D θ, Lieblein/Howell/Koch correlations, per-row Reynolds correction, $g(	heta)$ ×9, off-design map), L2 affine calibration, caching, physics features. |
+| `scm_core.py` | 1 (L1) | Streamline-curvature through-flow: full radial equilibrium with the meridional-curvature term over 5–11 streamlines, continuity per streamtube, blade-angle closure, Euler per streamline, spanwise-resolved losses. No external dependency. |
 | `structures_core.py` | 1s | Structural core L0s: materials library with thermal derating, per-stage 1-D rotating-disc solver (validated against Timoshenko), blade-root (Peterson K_t), AN², burst and Campbell (blade-passing) margins, Goodman + flutter screen metrics. **Hard optimizer constraint** via `DesignSpec.material`. |
 | `neural_optimizer.py` | 2–4 | Deep ensemble with uncertainty + quality gate, NSGA-II with Deb's constrained dominance, LCB acquisition + k-means, orchestrator `design(spec)` — ported from Phy-CC (domain-agnostic core). |
 | `blade_profiles.py` | 5a | NACA-65 / DCA sections on circular-arc camber, Lieblein/Aungier design incidence, Carter deviation, metal-angle fixed point. |
@@ -192,7 +193,7 @@ C# phase outputs: one STL per part plus the union views (binary, in mm).
 | `AxialCompressorDesigner.Example/` | 5c | Executable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | product | End-to-end CLI: spec → design → geometry → report → dataset [→ STLs via --stl/--voxel]. |
 | `contract_schema.py` | 5a | Published JSON Schema of `phyac-axial-2` + dependency-free validator (also a CLI: `python contract_schema.py <contract>`). |
-| `test_phyac.py` | VV&UQ | Verification suite: 153 checks (triangles, conservation, g continuity, profiles, contract schema, disc solver, optimizer core, L1 spool, assembly interference). |
+| `test_phyac.py` | VV&UQ | Verification suite: 163 checks (triangles, conservation, g continuity, profiles, contract schema, disc solver, optimizer core, L1 through-flow, radial equilibrium, assembly interference). |
 | `validation/` | VV&UQ | Validation campaign vs NASA Stage 35, Rotor 37/67 and GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## Python API (layers 1–5b)
@@ -287,12 +288,13 @@ Phy-AC/
 ├── neural_optimizer.py                   layers 2–4 ensemble + NSGA-II + design(spec)
 ├── blade_profiles.py                     layer 5a  NACA-65/DCA + metal angles
 ├── geometry_generator.py                 layer 5a  contract + CSV/BOM/STEP exports
+├── scm_core.py                           layer 1   L1 streamline-curvature through-flow
 ├── contract_schema.py                    layer 5a  phyac-axial-2 schema + validator (CLI)
 ├── data_pipeline.py                      layer 0   public aggregates + SHA-256 manifest
 ├── report_generator.py                   layer 5b  self-contained HTML report
 ├── visualization.py                      layer 5b  matplotlib figures (optional)
 ├── phyac_cli.py                          end-to-end CLI (spec → design → report [→ STLs])
-├── test_phyac.py                         verification suite (153 checks)
+├── test_phyac.py                         verification suite (163 checks)
 │
 ├── schemas/                              published JSON Schema of the contract
 ├── validation/                           validation campaign (machines.py, validate.py)
@@ -321,15 +323,17 @@ Phy-AC/
 
 ## Dependencies
 
-- **Layers 1–5b (Python ≥ 3.10)**: **NumPy only** core. Optional
-  dependencies with graceful degradation: `turbo-design` v1.4.2 +
-  `cantera` (activates L1 axial spool fidelity), `matplotlib` (report
-  figures), `cadquery` (STEP export).
+- **Layers 1–5b (Python ≥ 3.10)**: **NumPy only** core — and that
+  includes L1: since phase 11 the streamline-curvature through-flow
+  solver is ours (`scm_core.py`), so there is no external dependency to
+  install and none that can go missing in silence. Optional dependencies
+  with graceful degradation: `matplotlib` (report figures), `cadquery`
+  (STEP export).
 
   ```bash
   pip install numpy
   pip install matplotlib                    # optional, report figures
-  pip install turbo-design==1.4.2 cantera   # optional, L1 fidelity
+  pip install cadquery                      # optional, STEP export
   ```
 
 - **Layer 5c (C#)**: .NET 9 SDK + x64 runtime. PicoGK is resolved as a
@@ -345,8 +349,6 @@ project's code:
 |---|---|---|
 | [NumPy](https://numpy.org/) | BSD-3-Clause | Yes — the only hard dependency |
 | [matplotlib](https://matplotlib.org/) | Matplotlib License (BSD-style) | Optional (`viz` extra) |
-| [turbo-design](https://github.com/nasa/turbo-design) (NASA TD3) | Apache-2.0 | Optional (`l1` extra) |
-| [Cantera](https://cantera.org/) | BSD-3-Clause | Optional (`l1` extra, required by turbo-design) |
 | [CadQuery](https://cadquery.readthedocs.io/) | Apache-2.0 | Optional (`step` extra) |
 | [PicoGK](https://picogk.org/) (LEAP 71) | Apache-2.0 | Yes, for layer 5c (C#) only |
 | [turbodesigner](https://github.com/OpenOrion/turbodesigner) (OpenOrion) | MIT | No — design reference for layer 5a/5c (no code imported) |
@@ -380,7 +382,7 @@ independent voxel fields built in the same `Library.Go` session.
 ## Verification and Validation
 
 ```bash
-python test_phyac.py               # verification: 153 checks
+python test_phyac.py               # verification: 163 checks
 python validation/validate.py      # validation: NASA machines → RESULTS.md
 python data_pipeline.py            # data anchors: rebuild + SHA-256 verify
 python contract_schema.py runs/x/geometry/axial_compressor.json   # contract
@@ -428,13 +430,17 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
 - **L0 shock model** is a two-point normal-shock average with
   K_SHOCK = 0.70 calibrated on Rotor 37/67; beyond M_tip ≈ 1.5 it is
   extrapolation.
-- **L1 (turbo-design 1.4.2)** requires the patches documented in
-  `physics_core.py` §3 and runs in meanline mode (1 streamline) inside a
-  timeout-guarded subprocess; each stage is transformed work-preservingly
-  (TD3's pressure-balance marching does not propagate inter-row swirl
-  into the Euler work). Measured: 95% solve success on feasible samples,
-  PR correlation r ≈ 0.95 vs L0, systematic PR ratio ≈ 0.94 absorbed by
-  `HiFiCalibration`.
+- **L1 (`scm_core.py`)** solves the full radial-equilibrium equation —
+  curvature term included — on 9 streamlines, with continuity per
+  streamtube and the blade metal angles frozen from the design vortex
+  law. It is a real second rung: under free vortex it reproduces the
+  meanline to +0.1% in PR (verification), and under controlled vortex it
+  departs by several percent because the meanline's closed form is only
+  approximate there. It refuses rather than guesses: a station that
+  cannot pass the mass flow, or a Cm profile the numerical limiter is
+  still holding at convergence, raises and the point degrades to L0 with
+  the reason in `source`. Not yet qualified against measurement — that is
+  the same gap as the off-design map.
 - **Blading** uses circular-arc camber with NACA 65-010 / biconvex
   thickness, printed as solid-profile lofts (rows thinner than 2 voxels
   fall back to a uniform-thickness camber shell with a logged warning);
@@ -443,6 +449,29 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
   design. The assembly view STL is for inspection only — print the parts.
 
 ## History
+
+- **2026-08-16 — L1 becomes a real rung: our own streamline-curvature
+  through-flow (phase 11 · F-01/H2)**: `scm_core.py` replaces
+  `turbo-design`. It solves the **full radial-equilibrium equation**,
+  meridional curvature term included, over 9 streamlines placed by mass
+  fraction, with continuity per streamtube, the blade metal angles frozen
+  from the design vortex law, **Euler per streamline** (work stops being
+  uniform across the span) and losses resolved where they happen — shock
+  only where the relative Mach justifies it, tip clearance in the outer
+  25% of span, Koch & Smith end-wall debit in the wall bands. What it
+  replaces was `turbo-design` 1.4.2 with three monkey-patches, forced to
+  `num_streamlines=1` because with more its radial-equilibrium ODE hung:
+  L1 was another meanline, run in a timeout-guarded subprocess, and dead
+  in silence for want of an undeclared dependency. **Verification**: with
+  zero curvature the numerically integrated ODE reproduces the closed
+  form of phase 9.1 to 2e-16 under free vortex; on the reference θ, L1
+  lands +0.13% in PR from L0 under free vortex (where the meanline is
+  exact) and −6.5% under controlled vortex (where it is not). It refuses
+  rather than guesses: a choked station, or a Cm profile the numerical
+  limiter is still holding at convergence, raises and the point degrades
+  to L0 with the reason recorded. **The `l1` extra is gone** — the whole
+  Python side is NumPy-only again, L1 included, and runs in-process at
+  ~3 s per machine. Verification 153 → 163 checks.
 
 - **2026-08-16 — layer 5c matches the CadQuery route again (phase 10 ·
   G-01)**: the STL (manufacturing route) and the STEP (re-CAD route) had
@@ -493,7 +522,7 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
   `requests`, and `_scm_solve` spawned its worker through
   multiprocessing, which on Windows re-imports the caller's `__main__` —
   so any script without a `__main__` guard timed out into L0 without a
-  word. Both fixed. Verification 112 → 153 checks.
+  word. Both fixed. Verification 112 → 149 checks.
 
 - **2026-08-16 — physics of range and real gas (phase 9)**: the loss
   bookkeeping was rebuilt on cited mechanism instead of tuned constants.

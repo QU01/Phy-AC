@@ -20,9 +20,12 @@ dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
 viz = ["matplotlib>=3.7"]      # sección de visualización meanline del reporte
-l1 = ["turbo-design==1.4.2", "cantera"]  # fidelidad L1 (spool axial SCM)
 step = ["cadquery"]            # export STEP de las filas de álabes
-all = ["phyac[viz,l1,step]"]
+all = ["phyac[viz,step]"]
+# El extra `l1` desapareció en la fase 11. La fidelidad L1 (through-flow
+# por curvatura de líneas de corriente) es PROPIA — scm_core.py — y solo
+# necesita numpy: ya no hay dependencia externa que instalar ni que
+# pueda faltar en silencio.
 
 [project.scripts]
 phyac = "phyac_cli:main"
@@ -32,6 +35,7 @@ phyac = "phyac_cli:main"
 [tool.setuptools]
 py-modules = [
     "physics_core",
+    "scm_core",
     "structures_core",
     "neural_optimizer",
     "geometry_generator",

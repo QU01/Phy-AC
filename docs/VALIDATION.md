@@ -1,7 +1,7 @@
 # Phy-AC — Campaña de validación
 
 Distinción VV&UQ del proyecto: `test_phyac.py` VERIFICA (¿resolvemos bien
-las ecuaciones? — 153 checks); `validation/validate.py` VALIDA (¿las
+las ecuaciones? — 163 checks); `validation/validate.py` VALIDA (¿las
 ecuaciones correctas? — contra máquinas NASA medidas). CI corre ambos en
 estricto.
 
@@ -197,6 +197,42 @@ NO está en el STEP ni en el margen estructural. Por eso la comparación se
 hace con el filete apagado y por eso queda anotado aquí: pendiente de
 investigar.
 
+### Fase 11 (2026-08-16) — L1 pasa a ser un peldaño de verdad
+
+`scm_core.py` sustituye a `turbo-design`: through-flow por curvatura de
+líneas de corriente, equilibrio radial COMPLETO sobre 9 líneas,
+continuidad por tubo de corriente, cierre por ángulos metálicos del álabe
+y pérdidas resueltas en el span. Sin dependencia externa y en proceso
+(~3 s por máquina).
+
+**Verificación** (bloque T21 de la suite): con curvatura nula y
+Cu ∝ r^n, el ODE integrado numéricamente reproduce la forma cerrada
+`vortex_cx` con desvío 2e-16 en vórtice libre y ~2e-3 (error del trapecio
+sobre 9 puntos) en n = −0.5, 0, +0.5. Y sobre el θ de referencia:
+
+| Ley de torbellino | ΔPR vs L0 | Δη_poly | Reparto de trabajo en el span |
+|---|---|---|---|
+| libre (n = −1) | +0.13% | +0.34 pts | 6.9% |
+| controlado (n = −0.5) | −6.5% | −0.01 pts | 5.6% |
+
+La fila de vórtice libre es VERIFICACIÓN: es el caso donde las hipótesis
+del meanline son exactas, así que coincidir es el resultado esperado. La
+de torbellino controlado es el RESIDUAL que la capa 2 necesita.
+
+**Sigue SIN calificar contra medida.** L1 aporta variación de fidelidad y
+distribución radial; no exactitud demostrada. Es el mismo hueco que el
+mapa fuera de diseño (F-02) y, con speedlines medidas, la primera
+comparación que hay que hacer.
+
+**Hallazgo del solver**: aplicar el exponente de torbellino por igual a
+Cu₁ y Cu₂ hace que el trabajo de Euler varíe como r^(n+1). Para n ≠ −1 el
+diseño es de trabajo NO uniforme y el meanline solo lo evaluaba en la
+línea media. En máquinas de varias etapas ese sesgo se compone y el
+limitador de perfil del SCM llega a saltar (el punto degrada a L0
+etiquetado). Es una limitación del MODELO de torbellino de la fase 9.1,
+no del solver: pendiente de decidir si la ley debe imponerse sobre el
+trabajo en vez de sobre Cu.
+
 ### Nota de la fase 10 (2026-08-16) — qué significaba «L1» hasta ahora
 
 La campaña califica el meanline L0, que es lo que se compara contra las
@@ -211,13 +247,16 @@ silencio a L0:
 2. `_scm_solve` lanzaba su worker con `multiprocessing`. En Windows
    (método `spawn`) el hijo reimporta el módulo `__main__` del padre:
    cualquier script sin `if __name__ == "__main__"` se reejecutaba
-   entero dentro del hijo, agotaba `L1_TIMEOUT_S` y degradaba a
+   entero dentro del hijo, agotaba el timeout y degradaba a
    `meanline_L0(L1_unavailable_or_diverged)`. El CLI y `validate.py` sí
    tienen guard, así que las corridas de producto no estaban afectadas;
-   la suite de verificación no lo tiene. Ahora el hijo se lanza con
-   `python -c` y no importa nada del que llama.
+   la suite de verificación no lo tiene.
 
-Sobre el θ de referencia, L1 devuelve PR 2.464 y η_p 0.839 frente a
-2.618 / 0.901 de L0 — el sesgo de ≈0.94 en PR que ya estaba anotado
-arriba. Sigue sin calificar contra medida: L1 aporta variación de
-fidelidad, no exactitud demostrada.
+Las dos causas dejaron de existir en la fase 11: L1 es propio, no tiene
+dependencias que declarar y corre EN PROCESO — no hay subproceso, así que
+tampoco hay `__main__` que reimportar.
+
+Con aquel L1 (TD3) el θ de referencia daba PR 2.464 y η_p 0.839 frente a
+2.618 / 0.901 de L0 — el sesgo de ≈0.94 en PR anotado arriba. Ese sesgo
+era del transformado por etapa de TD3, no de la física: el SCM propio de
+la fase 11 da +0.13% sobre L0 en el mismo caso.

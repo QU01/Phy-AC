@@ -45,14 +45,25 @@ _n_pass = _n_fail = 0
 # librería no está. En una máquina de desarrollo es razonable; en CI es
 # exactamente lo contrario de lo que queremos, porque un job sin CadQuery
 # pasa en verde sin haber comprobado NADA de la geometría. Con
-# PHYAC_REQUIRE_STEP=1 / PHYAC_REQUIRE_L1=1 la ausencia deja de ser un
+# PHYAC_REQUIRE_STEP=1 la ausencia deja de ser un
 # SKIP y pasa a ser un FALLO. El CI los pone a 1 en el job que instala los
 # extras (ver .github/workflows/ci.yml).
 REQUIRE_STEP = os.environ.get("PHYAC_REQUIRE_STEP", "") not in ("", "0")
-REQUIRE_L1 = os.environ.get("PHYAC_REQUIRE_L1", "") not in ("", "0")
+# PHYAC_REQUIRE_L1 desapareció en la fase 11: L1 es propio y no puede
+# faltar. Se conserva PHYAC_REQUIRE_STEP (CadQuery) y PHYAC_REQUIRE_STL
+# (capa 5c compilada), que sí son opcionales de verdad.
 # Igual para la capa 5c (C#): la paridad STL↔STEP solo se puede comprobar
 # con la solucion compilada. PHYAC_REQUIRE_STL=1 en el job que la compila.
 REQUIRE_STL = os.environ.get("PHYAC_REQUIRE_STL", "") not in ("", "0")
+
+
+def _ok_call(fn) -> bool:
+    """True si `fn()` no lanza. Para comprobar que algo FALLA de verdad."""
+    try:
+        fn()
+        return True
+    except Exception:
+        return False
 
 
 def check(name: str, ok, detail: str = ""):
@@ -1071,38 +1082,123 @@ with tempfile.TemporaryDirectory() as _td17:
           and cx._main(["contract_schema.py", _p_bad]) == 1)
 
 # ==========================================================================
-print("— T18 · fidelidad L1 (SCM sobre turbo-design)")
-# La vía L1 no tenía NI UNA comprobación: si turbo-design no importa,
-# `_try_load_turbodesign` devuelve False sin ruido y todo el sistema corre
-# en L0 creyendo que corre en L1. Así se descubrió que turbo-design 1.4.2
-# no declara `requests` entre sus dependencias — estaba instalado y no
-# cargaba.
-_td_ok = pc._try_load_turbodesign()
-if not _td_ok:
-    check("L1: turbo-design no disponible "
-          + ("(EXIGIDO por PHYAC_REQUIRE_L1)" if REQUIRE_L1 else "(SKIP)"),
-          not REQUIRE_L1, str(pc._TD_REASON))
-else:
-    _r_l1 = pc.evaluate(THETA_REF, fidelity=pc.Fidelity.L1, use_cache=False)
-    check("L1 resuelve de verdad: el record viene del SCM, no del meanline",
-          _r_l1["source"] == "scm_L1",
-          _r_l1["source"])
-    _r_l0 = pc.evaluate(THETA_REF, fidelity=pc.Fidelity.L0, use_cache=False)
-    check("L1 mueve el resultado respecto a L0 pero se queda en el mismo "
-          "orden de magnitud",
-          _r_l1["PR"] != _r_l0["PR"]
-          and 0.6 < _r_l1["PR"] / _r_l0["PR"] < 1.6
-          and 0.5 < _r_l1["eta_poly"] < 1.0,
-          f"PR {_r_l0['PR']:.3f} → {_r_l1['PR']:.3f}, "
-          f"η_p {_r_l0['eta_poly']:.3f} → {_r_l1['eta_poly']:.3f}")
-    check("el record L1 conserva el contrato de campos del L0",
-          set(_r_l0) <= set(_r_l1)
-          and _r_l1["n_stages"] == _r_l0["n_stages"])
-    check("un diseño INVIABLE no paga el SCM (se queda en L0)",
-          pc.evaluate(np.array([8.0, 30_000.0, 0.90, 1.20, 0.90, 0.0, 0.30,
-                                2.5, 2.5, 1.0, 288.15, 101_325.0, 60.0]),
-                      fidelity=pc.Fidelity.L1,
-                      use_cache=False)["source"].startswith("meanline_L0"))
+print("— T18 · fidelidad L1: SCM propio (fase 11 · F-01/H2)")
+import scm_core as sc1     # noqa: E402
+
+check("L1 ya NO depende de nada externo: está siempre disponible",
+      pc.l1_available() and pc.l1_unavailable_reason() is None)
+
+_r_l1 = pc.evaluate(THETA_REF, fidelity=pc.Fidelity.L1, use_cache=False)
+_r_l0 = pc.evaluate(THETA_REF, fidelity=pc.Fidelity.L0, use_cache=False)
+check("L1 resuelve de verdad: el record viene del SCM, no del meanline",
+      _r_l1["source"] == "scm_L1", _r_l1["source"])
+check("el record L1 conserva el contrato de campos del L0",
+      set(_r_l0) <= set(_r_l1)
+      and _r_l1["n_stages"] == _r_l0["n_stages"])
+check("un diseño INVIABLE no paga el SCM (se queda en L0)",
+      pc.evaluate(np.array([8.0, 30_000.0, 0.90, 1.20, 0.90, 0.0, 0.30,
+                            2.5, 2.5, 1.0, 288.15, 101_325.0, 60.0]),
+                  fidelity=pc.Fidelity.L1,
+                  use_cache=False)["source"].startswith("meanline_L0"))
+
+# ==========================================================================
+print("— T21 · equilibrio radial y líneas de corriente (fase 11)")
+
+# --- VERIFICACIÓN: el ODE reproduce la forma cerrada de la fase 9.1 -------
+# Sin pérdidas ni curvatura, la ecuación de equilibrio radial integrada
+# numéricamente TIENE que dar el mismo perfil que
+# physics_core.vortex_cx, que es su solución analítica para Cu ∝ r^n. Si
+# esto falla, el solver no está resolviendo la ecuación que dice resolver.
+_r21 = np.linspace(0.18, 0.28, 9)
+_rm21, _cum21, _cxm21 = 0.23, 90.0, 160.0
+_A21 = math.pi * (0.28 ** 2 - 0.18 ** 2)
+_md21 = (101_325.0 / (287.0 * 288.15) * 0.85) * _cxm21 * _A21
+_worst21 = {}
+for _n21 in (-1.0, -0.5, 0.0, 0.5):
+    _cu21 = np.array([pc.vortex_cu(_cum21, x, _rm21, _n21) for x in _r21])
+    _cm21, _, _lim21 = sc1._solve_station_cm(
+        _r21, _cu21, np.full(9, pc.h_air(288.15)), np.zeros(9),
+        np.full(9, 288.15), np.full(9, _cxm21), np.zeros(9), np.ones(9),
+        _md21, 1.0, 288.15, 101_325.0, _cxm21)
+    _ref21 = np.array([pc.vortex_cx(_cxm21, _cum21, x, _rm21, _n21)
+                       for x in _r21])
+    _worst21[_n21] = float(np.max(np.abs(
+        _cm21 / np.interp(_rm21, _r21, _cm21)
+        - _ref21 / np.interp(_rm21, _r21, _ref21))))
+check("el ODE de equilibrio radial reproduce la forma cerrada de vortex_cx",
+      max(_worst21.values()) < 5e-3 and _worst21[-1.0] < 1e-12,
+      "máx. desvío de forma: "
+      + ", ".join(f"n={k:+.1f}: {v:.1e}" for k, v in _worst21.items()))
+
+_scm = _r_l1["scm"]
+check("el SCM resuelve sobre N líneas de corriente y 2n+1 estaciones",
+      _scm["n_streamlines"] == sc1.N_STREAMLINES >= 5
+      and _scm["n_stations"] == 2 * _r_l1["n_stages"] + 1,
+      f"{_scm['n_streamlines']} líneas × {_scm['n_stations']} estaciones "
+      f"en {_scm['iterations']} iteraciones")
+
+# --- continuidad POR ESTACIÓN --------------------------------------------
+_sl = np.array(_scm["streamlines_mm"]) / 1000.0
+check("las líneas de corriente son monótonas y viven dentro de la vena",
+      all(np.all(np.diff(_sl[k]) > 0) for k in range(len(_sl)))
+      and all(abs(_sl[k][0] - _scm["r_hub_mm"][k] / 1000.0) < 1e-9
+              and abs(_sl[k][-1] - _scm["r_tip_mm"][k] / 1000.0) < 1e-9
+              for k in range(len(_sl))))
+
+# --- el vórtice libre DEBE reproducir el meanline -------------------------
+# Es la condición en la que las hipótesis del meanline son exactas (Cx
+# radialmente constante, trabajo uniforme): si ahí las dos capas no
+# coinciden, la diferencia no es fidelidad, es un error.
+check("con vórtice libre L1 reproduce el meanline (±1% PR, ±1 pt η)",
+      abs(_r_l1["PR"] / _r_l0["PR"] - 1.0) < 0.01
+      and abs(_r_l1["eta_poly"] - _r_l0["eta_poly"]) < 0.01,
+      f"PR {_r_l0['PR']:.4f} → {_r_l1['PR']:.4f} "
+      f"({100 * (_r_l1['PR'] / _r_l0['PR'] - 1):+.2f}%), "
+      f"η {_r_l0['eta_poly']:.4f} → {_r_l1['eta_poly']:.4f}")
+
+# --- y con torbellino controlado NO debe reproducirlo ---------------------
+# Ahí la forma cerrada del meanline es una aproximación y el trabajo deja
+# de ser uniforme en el span: es donde L1 aporta el residual que la capa 2
+# necesita aprender. Un L1 que devuelve siempre lo mismo que L0 no es un
+# peldaño de fidelidad.
+_vn21 = pc.VORTEX_N
+pc.VORTEX_N = -0.5
+_r0_cv = pc.evaluate(THETA_REF, fidelity=pc.Fidelity.L0, use_cache=False)
+_r1_cv = pc.evaluate(THETA_REF, fidelity=pc.Fidelity.L1, use_cache=False)
+pc.VORTEX_N = _vn21
+check("con torbellino controlado (n=−0.5) L1 SÍ se separa de L0",
+      _r1_cv["source"] == "scm_L1"
+      and abs(_r1_cv["PR"] / _r0_cv["PR"] - 1.0) > 0.01,
+      f"PR {_r0_cv['PR']:.4f} → {_r1_cv['PR']:.4f} "
+      f"({100 * (_r1_cv['PR'] / _r0_cv['PR'] - 1):+.2f}%)")
+
+# --- independencia del número de líneas ----------------------------------
+_pr_sl = {}
+for _n_sl in (7, 11):
+    _pr_sl[_n_sl] = sc1.solve(THETA_REF, _r_l0, n_streamlines=_n_sl)["PR"]
+check("el resultado no depende del nº de líneas (7 vs 11, <0.5%)",
+      abs(_pr_sl[7] / _pr_sl[11] - 1.0) < 0.005,
+      f"PR 7 líneas {_pr_sl[7]:.4f} vs 11 líneas {_pr_sl[11]:.4f}")
+check("menos de 5 líneas se RECHAZA (la derivada radial no tendría sentido)",
+      not _ok_call(lambda: sc1.solve(THETA_REF, _r_l0, n_streamlines=3)))
+
+# --- el trabajo deja de ser uniforme en el span ---------------------------
+_dh21 = np.array(_scm["dh0_span"])
+check("L1 entrega el reparto RADIAL de trabajo que el meanline no tiene",
+      len(_dh21) == _scm["n_streamlines"] and _scm["work_spread"] > 0.005
+      and np.all(_dh21 > 0),
+      f"Δh₀ de {_dh21.min() / 1000:.1f} a {_dh21.max() / 1000:.1f} kJ/kg "
+      f"({100 * _scm['work_spread']:.1f}% del trabajo medio)")
+check("y el perfil de Cm tiene déficit en LAS DOS paredes",
+      (np.array(_scm["cm_exit"])[0] < max(_scm["cm_exit"])
+       and np.array(_scm["cm_exit"])[-1] < max(_scm["cm_exit"])),
+      "Cm salida: " + " ".join(f"{v:.0f}" for v in _scm["cm_exit"]))
+
+# --- la divergencia se REPORTA, no se traga -------------------------------
+check("SCMDiverged es un error propio, no un None silencioso",
+      issubclass(sc1.SCMDiverged, Exception)
+      and not _ok_call(lambda: sc1.solve(
+          THETA_REF, _r_l0, n_streamlines=4)))
 
 # ==========================================================================
 print("— T20 · paridad capa 5c (C#/PicoGK) ↔ via CadQuery (fase 10 · G-01)")

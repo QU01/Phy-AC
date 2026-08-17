@@ -393,123 +393,29 @@ def _theta_key(theta: np.ndarray, fidelity: int, extra: str = "") -> str:
     return hashlib.sha1(arr.tobytes() + bytes([fidelity])
                         + extra.encode()
                         + _physics_params_key().encode()).hexdigest()
-
-
 # ==========================================================================
-# 1. PATCHES de turbo-design (heredados de Phy-CC, aplicados perezosamente)
+# 1. FIDELIDAD L1 — through-flow por curvatura de líneas de corriente
+#
+# El solver vive en `scm_core.py` (import diferido: physics_core es su
+# dependencia, así que importarlo arriba sería circular). Desde la fase 11
+# NO hay dependencia externa: L1 es propio, corre en proceso y está
+# SIEMPRE disponible.
+#
+# Lo que había antes: `turbo-design` 1.4.2 con tres parches, forzado a
+# num_streamlines=1 porque con más su ODE de equilibrio radial colapsaba
+# el paso y se colgaba — es decir, «L1» era otro meanline. Se lanzaba en
+# subproceso con timeout de 180 s por esos cuelgues, y en la práctica
+# estaba muerto en silencio (el paquete no declara `requests`, así que el
+# import fallaba y todo el sistema corría en L0 creyendo correr en L1).
 # ==========================================================================
-_TD_AVAILABLE: bool | None = None
-_TD_REASON: str | None = None
-_TD_MODS: dict = {}
-
-
-def _patched_compute_streamline_areas(row):
-    """Frustum cónico correcto: A = pi*(r_j + r_{j-1})*sqrt(dx^2+dr^2).
-
-    El código original eleva dx al cuadrado y permite áreas negativas. En
-    pasajes axiales (dr≈0) esta forma degenera correctamente al cilindro
-    A = 2π·r·dx, así que el patch es seguro para ambos tipos de pasaje.
-    """
-    total_area = 0.0
-    streamline_area = np.zeros(len(row.percent_hub_shroud))
-    if len(row.percent_hub_shroud) <= 1:
-        if getattr(row, "total_area", None):
-            total_area = float(row.total_area)
-            streamline_area = np.array([total_area])
-        return total_area, streamline_area
-    for j in range(1, len(row.percent_hub_shroud)):
-        dx = row.x[j] - row.x[j - 1]
-        dr = row.r[j] - row.r[j - 1]
-        if abs(dx) < 1e-5 and abs(dr) > 1e-9:
-            delta = abs(np.pi * (row.r[j] ** 2 - row.r[j - 1] ** 2))
-        else:
-            dl = math.sqrt(dx ** 2 + dr ** 2)
-            delta = abs(np.pi * (row.r[j] + row.r[j - 1]) * dl)
-        streamline_area[j] = delta
-        total_area += delta
-    return total_area, streamline_area
-
-
-def _try_load_turbodesign() -> bool:
-    """Import perezoso de turbo-design + patches. Nunca lanza: la ausencia
-    de la librería degrada limpiamente el sistema a L0."""
-    global _TD_AVAILABLE, _TD_REASON
-    if _TD_AVAILABLE is not None:
-        return _TD_AVAILABLE
-    try:
-        with contextlib.redirect_stdout(io.StringIO()), \
-             contextlib.redirect_stderr(io.StringIO()):
-            import turbodesign.flow_math as _fm
-            import turbodesign.compressor_math as _cm
-            import turbodesign.compressor_spool as _cs
-            from turbodesign import Passage, PassageType, Inlet, Outlet
-            from turbodesign.row_factory import make_rotor_row
-            from turbodesign.compressor_spool import CompressorSpool
-            from turbodesign.loss.losstype import LossBaseClass
-            from turbodesign.loss.fixedpressureloss import FixedPressureLoss
-            from turbodesign.enums import LossType
-            from cantera import Solution
-            # make_stator_row no existe en todas las versiones de TD3 1.4.x;
-            # se introspecta y, si falta, el spool L1 corre solo con las
-            # filas de rotor (ver _scm_solve).
-            try:
-                from turbodesign.row_factory import make_stator_row
-            except Exception:
-                make_stator_row = None
-        _fm.compute_streamline_areas = _patched_compute_streamline_areas
-        _cm.compute_streamline_areas = _patched_compute_streamline_areas
-
-        # PATCH 3 (verificado en TD3 1.4.2, 2026-07-11): stator_calc hace
-        # `row.Yp[:] = 0` pero con pérdida politrópica en filas de estátor
-        # Yp puede llegar como np.float64 0-D → TypeError. Se coerce a
-        # array 1-D antes de delegar. compressor_spool importa stator_calc
-        # POR NOMBRE, así que hay que parchear ambas referencias.
-        _orig_stator_calc = _cm.stator_calc
-
-        def _patched_stator_calc(row, upstream, calculate_vm=True):
-            if np.ndim(getattr(row, "Yp", None)) == 0:
-                row.Yp = np.atleast_1d(np.asarray(row.Yp, dtype=float))
-            return _orig_stator_calc(row, upstream, calculate_vm)
-
-        _cm.stator_calc = _patched_stator_calc
-        _cs.stator_calc = _patched_stator_calc
-
-        class ScalarPolytropicLoss(LossBaseClass):
-            """Eficiencia politrópica fija compatible con TD3 v1.4.2
-            (rotor_calc hace float(loss_fn(...)) y solo acepta 0-D)."""
-
-            def __init__(self, eta_poly: float):
-                super().__init__(LossType.Polytropic)
-                self._eta = float(eta_poly)
-
-            def __call__(self, row, upstream):  # noqa: ARG002
-                return np.float64(self._eta)
-
-        _TD_MODS.update(dict(
-            Passage=Passage, PassageType=PassageType, Inlet=Inlet,
-            Outlet=Outlet, make_rotor_row=make_rotor_row,
-            make_stator_row=make_stator_row,
-            CompressorSpool=CompressorSpool, Solution=Solution,
-            ScalarPolytropicLoss=ScalarPolytropicLoss,
-            FixedPressureLoss=FixedPressureLoss,
-        ))
-        _TD_AVAILABLE = True
-    except Exception as e:
-        _TD_AVAILABLE = False
-        msg = str(e).strip().splitlines()
-        _TD_REASON = f"{type(e).__name__}: {msg[0] if msg else ''}"
-    return _TD_AVAILABLE
-
-
 def l1_available() -> bool:
-    """True si turbo-design + cantera son importables y parchables."""
-    return _try_load_turbodesign()
+    """L1 es propio desde la fase 11: siempre disponible."""
+    return True
 
 
 def l1_unavailable_reason() -> str | None:
-    """Primera línea del error de import si L1 no está disponible."""
-    _try_load_turbodesign()
-    return _TD_REASON
+    """None — ya no hay dependencia externa que pueda faltar."""
+    return None
 
 
 # ==========================================================================
@@ -1734,224 +1640,31 @@ def compressor_map(theta: np.ndarray,
 # ==========================================================================
 # 3. L1 — SCM de turbo-design (spool axial multi-fila, modo meanline)
 #
-# Hallazgos del spike M7 (TD3 1.4.2, documentados en docs/Science.md):
-#   * num_streamlines=1 OBLIGATORIO: con >1 el ODE de equilibrio radial
-#     (radeq/solve_ivp) colapsa el paso y se cuelga indefinidamente.
-#   * El marching de balance de presión NO propaga el remolino de entrada
-#     al trabajo de Euler del rotor (el rotor siempre ve entrada axial).
-#     Por eso cada etapa se TRANSFORMA conservando el trabajo: entrada
-#     axial, rotor con Cu2_eff = ψ·U (β2 equivalente) y estátor que
-#     devuelve el flujo a axial. τ queda igual por construcción y TD3
-#     aporta la marcha compresible + annulus real.
-#   * La pérdida se impone como FixedPressureLoss (Yp referida a la carga
-#     dinámica de la fila AGUAS ARRIBA en TD3): los ω̄ del L0 se reescalan
-#     a esa referencia. La pérdida politrópica (patrón Phy-CC) NO es
-#     alcanzable por el optimizador interno de TD3 en spools axiales.
-#   * El bucle "Looping to converge massflow" puede colgarse → cada solve
-#     corre en subproceso con timeout PHYAC_L1_TIMEOUT (def. 180 s).
 # ==========================================================================
-L1_TIMEOUT_S = float(os.environ.get("PHYAC_L1_TIMEOUT", "180"))
+# 3. L1 — SCM propio (scm_core.py)
+# ==========================================================================
+def _scm_solve(theta: np.ndarray, record: dict) -> dict | None:
+    """Resuelve el through-flow L1 sobre el diseño que describe `record`.
 
-
-def _build_passage(theta: np.ndarray, record: dict):
-    """Pasaje meridional AXIAL hub/shroud en metros, con estaciones en
-    cada frontera de FILA (el área de salida del rotor importa: sin ella
-    TD3 ve el área de entrada de la etapa y sobregira el flujo)."""
-    M = _TD_MODS
-    st = record["stage_table"]
-    frozen = record.get("frozen") or {}
-    areas_next = frozen.get("areas", [])
-    z, areas = [0.0], [st[0]["A_in_m2"]]
-    for i, s in enumerate(st):
-        cr = s["chord_rotor_mm"] / 1000.0
-        cs = s["chord_stator_mm"] / 1000.0
-        z.append(z[-1] + cr)
-        areas.append(s["A_rotor_exit_m2"])
-        z.append(z[-1] + ROW_GAP_FRACTION * cr + (1 + ROW_GAP_FRACTION) * cs)
-        if i + 1 < len(areas_next):
-            areas.append(areas_next[i + 1])
-        else:
-            areas.append(s["A_rotor_exit_m2"])
-    # r_mean por estación: la de su etapa (const_mean ⇒ constante)
-    r_hub, r_tip = [], []
-    r_means = [st[0]["r_mean_mm"] / 1000.0]
-    for s in st:
-        r_means += [s["r_mean_mm"] / 1000.0] * 2
-    for A, r_m in zip(areas, r_means):
-        h = A / (2 * math.pi * r_m)
-        r_hub.append(r_m - 0.5 * h)
-        r_tip.append(r_m + 0.5 * h)
-    z = np.array(z)
-    return M["Passage"](z, np.array(r_hub), z.copy(), np.array(r_tip),
-                        passageType=M["PassageType"].Axial), z
-
-
-def _scm_solve_direct(theta: np.ndarray) -> dict | None:
-    """Corre el spool SCM axial EN ESTE PROCESO; None si diverge.
-
-    Usar _scm_solve (wrapper con timeout) desde código de producto.
+    Devuelve None si el solver no converge o si el diseño lleva a una
+    estación bloqueada — el que llama degrada a L0 y lo ETIQUETA, nunca
+    en silencio. El motivo queda en `_scm_last_reason` para el log.
     """
-    if not _try_load_turbodesign():
-        return None
-    M = _TD_MODS
-    theta = np.asarray(theta, dtype=float)
-    T0_in, P0_in, mdot = float(theta[10]), float(theta[11]), float(theta[12])
-    RPM = float(theta[1])
+    global _scm_last_reason
+    import scm_core                       # diferido: dependencia circular
     try:
-        rec0 = _meanline(theta)
-        st = rec0["stage_table"]
-        _dbg = os.environ.get("PHYAC_DEBUG_L1")
-        _co = contextlib.nullcontext() if _dbg else contextlib.redirect_stdout(io.StringIO())
-        _ce = contextlib.nullcontext() if _dbg else contextlib.redirect_stderr(io.StringIO())
-        with _co, _ce:
-            n = len(st)
-            # ángulos equivalentes iniciales (Cx de diseño); el lazo
-            # exterior los corrige con el Cx REAL de TD3 (su densidad
-            # local difiere de la del L0 y el acople Cx↔trabajo es fuerte
-            # a stagger ~45°)
-            b2_eff = []
-            for s in st:
-                U, Cx = s["U_m"], s["Cx"]
-                b2_eff.append(math.degrees(math.atan2(U - s["psi"] * U, Cx)))
-
-            PR = tau = None
-            for _outer in range(6):
-                passage, z_st = _build_passage(theta, rec0)
-                z_total = float(z_st[-1])
-                inlet = M["Inlet"](hub_location=0, alpha=[0])
-                inlet.init_total(P0=P0_in, T0=T0_in, M=0.3)
-                outlet = M["Outlet"](num_streamlines=1)
-                outlet.init_static(P=0.9 * rec0["PR"] * P0_in,
-                                   percent_radii=[0.5])
-                rows = []
-                for i, s in enumerate(st):
-                    U, Cx = s["U_m"], s["Cx"]
-                    W2_eff = math.hypot(Cx, U - s["psi"] * U)
-                    # ω̄ del L0 reescalados a la referencia de TD3 (q de
-                    # la fila aguas arriba): rotor ← q axial, estátor ←
-                    # q relativa de salida del rotor.
-                    om_r = (s["losses"]["omega_rotor"]
-                            + s["losses"]["clearance"]
-                            / max(0.5 * s["W1"] ** 2, 1e-3)) \
-                        * (s["W1"] / max(Cx, 1e-3)) ** 2
-                    om_s = s["losses"]["omega_stator"] * \
-                        (s["C2"] / max(W2_eff, 1e-3)) ** 2
-                    rows.append(M["make_rotor_row"](
-                        hub_location=float(z_st[1 + 2 * i]) / z_total,
-                        metal_exit_angle_deg=-b2_eff[i],   # rotores NEG.
-                        P0_ratio=max(s["PR"], 1.05),       # gotcha: > 1
-                        num_blades=s["n_blades_rotor"],
-                        loss_function=M["FixedPressureLoss"](min(om_r, 0.9)),
-                    ))
-                    rows.append(M["make_stator_row"](
-                        hub_location=float(z_st[2 + 2 * i]) / z_total,
-                        metal_exit_angle_deg=0.0,          # → axial
-                        num_blades=s["n_blades_stator"],
-                        loss_function=M["FixedPressureLoss"](min(om_s, 0.9)),
-                    ))
-                spool = M["CompressorSpool"](
-                    passage=passage, massflow=mdot, inlet=inlet,
-                    outlet=outlet, rows=rows, rpm=RPM, num_streamlines=1,
-                    fluid=M["Solution"]("air.yaml"),
-                )
-                spool.solve()
-                allr = spool._all_rows()
-                P0_out = float(np.mean(allr[-1].P0))
-                P0_in_s = float(np.mean(allr[0].P0))
-                T0_out = float(np.mean(allr[-1].T0))
-                PR = P0_out / P0_in_s
-                tau = T0_out / T0_in
-
-                # corrección de trabajo por rotor: Cu2_logrado desde ΔT0
-                # de la fila; nuevo ángulo con el Cx real implícito
-                max_err = 0.0
-                T_prev = T0_in
-                for i, s in enumerate(st):
-                    row_rot = allr[1 + 2 * i]
-                    T_rot = float(np.mean(row_rot.T0))
-                    dT = max(T_rot - T_prev, 1e-3)
-                    T_prev = float(np.mean(allr[2 + 2 * i].T0))
-                    U = s["U_m"]
-                    Cu2_ach = dT * CP / U
-                    Cu2_tgt = s["psi"] * U
-                    tan_b2 = math.tan(math.radians(b2_eff[i]))
-                    Cx_ach = max((U - Cu2_ach) / max(tan_b2, 1e-3), 10.0)
-                    b2_new = math.degrees(math.atan2(U - Cu2_tgt, Cx_ach))
-                    # amortiguado: el acople trabajo↔densidad↔Cx hace
-                    # divergir el punto fijo sin relajación
-                    b2_eff[i] = 0.5 * (b2_eff[i] + b2_new)
-                    max_err = max(max_err,
-                                  abs(Cu2_ach - Cu2_tgt) / max(Cu2_tgt, 1e-3))
-                if max_err < 0.02:
-                    break
-        PR_L0 = rec0["PR"]
-        if not (np.isfinite(PR) and 0.70 * PR_L0 <= PR <= 1.40 * PR_L0
-                and 1.02 < PR < 40.0 and tau > 1.0):
-            if os.environ.get("PHYAC_DEBUG_L1"):
-                print(f"[L1] rechazado por ventana: PR={PR} (L0 {PR_L0}), "
-                      f"tau={tau}")
-            return None
-        eta = float(np.clip(((GAMMA - 1) / GAMMA) * math.log(PR)
-                            / max(math.log(tau), 1e-9), 0.05, 0.99))
-        return dict(PR=PR, eta_poly=eta, T0_out=T0_out, source="scm_L1")
-    except Exception:
-        if os.environ.get("PHYAC_DEBUG_L1"):
-            import traceback
-            traceback.print_exc()
+        out = scm_core.solve(theta, record)
+        _scm_last_reason = None
+        return out
+    except scm_core.SCMDiverged as e:
+        _scm_last_reason = str(e)
+        return None
+    except Exception as e:               # pragma: no cover — red de seguridad
+        _scm_last_reason = f"{type(e).__name__}: {e}"
         return None
 
 
-_L1_MARK = "<<<PHYAC_L1>>>"
-
-_L1_CHILD_SRC = (
-    "import json,sys;"
-    "sys.path.insert(0, sys.argv[2]);"
-    "import numpy as np, physics_core as pc;"
-    "r = pc._scm_solve_direct(np.array(json.loads(sys.argv[1]), "
-    "dtype=float));"
-    "sys.stdout.write({mark!r} + json.dumps(r, default=float))"
-).format(mark=_L1_MARK)
-
-
-def _scm_solve(theta: np.ndarray) -> dict | None:
-    """Spool SCM axial con timeout duro (proceso hijo).
-
-    El bucle de convergencia de gasto de TD3 puede colgarse (spike M7);
-    el hijo se termina a los L1_TIMEOUT_S segundos y el punto degrada a L0
-    etiquetado.
-
-    Se lanza con `python -c`, NO con multiprocessing. En Windows (método
-    `spawn`) el hijo de multiprocessing reimporta el módulo `__main__` del
-    padre para poder deserializar el target: cualquier script que llame a
-    la física sin envolver su cuerpo en `if __name__ == "__main__"` se
-    reejecuta entero dentro del hijo, agota el timeout y degrada a L0 en
-    SILENCIO. Así se descubrió: la suite de verificación —que no tiene
-    guard, porque es un script— creía correr en L1 desde siempre. El
-    proceso hijo explícito no importa nada del padre y elimina la
-    dependencia de cómo esté escrito el que llama.
-    """
-    if not _try_load_turbodesign():
-        return None
-    import subprocess
-    root = os.path.dirname(os.path.abspath(__file__))
-    try:
-        out = subprocess.run(
-            [sys.executable, "-c", _L1_CHILD_SRC,
-             json.dumps(np.asarray(theta, dtype=float).tolist()), root],
-            capture_output=True, text=True, timeout=L1_TIMEOUT_S,
-            cwd=root)
-    except Exception:      # TimeoutExpired incluido: el hijo ya está muerto
-        return None
-    if out.returncode != 0 or _L1_MARK not in out.stdout:
-        if os.environ.get("PHYAC_DEBUG_L1"):
-            print(f"[L1] hijo rc={out.returncode}\n{out.stderr[-2000:]}")
-        return None
-    try:
-        rec = json.loads(out.stdout.split(_L1_MARK, 1)[1])
-    except Exception:
-        return None
-    return rec if isinstance(rec, dict) else None
-
+_scm_last_reason: str | None = None
 
 # ==========================================================================
 # 4. Calibración de alta fidelidad (hook L2)
@@ -2064,11 +1777,16 @@ def evaluate(theta: np.ndarray, fidelity: Fidelity = Fidelity.L1,
         rec["n_stages"] = int(round(theta[0]))
         rec["fidelity"] = int(fidelity)
         if fidelity >= Fidelity.L1 and rec["feasible"] and not per_stage:
-            scm = _scm_solve(theta)
+            scm = _scm_solve(theta, rec)
             if scm:
                 rec.update(scm)
             else:
-                rec["source"] = rec["source"] + "(L1_unavailable_or_diverged)"
+                # El motivo IMPORTA: «no convergió» y «la estación se
+                # bloquea» dicen cosas distintas del diseño. Se etiqueta
+                # con él en vez de con un genérico.
+                why = (_scm_last_reason or "sin motivo").split(":")[0]
+                rec["source"] = rec["source"] + f"(L1_diverged: {why})"
+                rec["l1_reason"] = _scm_last_reason
         if use_cache:
             _cache_store(key, rec)
     if with_surge_margin and "sm_flow" not in rec:

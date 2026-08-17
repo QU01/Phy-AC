@@ -102,7 +102,7 @@ python phyac_cli.py --interactive        # o -i
 # 1. Diseño aerodinámico — humo rápido (~2 min, fidelidad L0):
 python phyac_cli.py --pr 4.0 --mdot 25 --quick --fidelity L0 --outdir runs/smoke
 
-#    Corrida completa (con turbo-design instalado, L1 verifica ganadores):
+#    Corrida completa (el through-flow L1 verifica los ganadores):
 python phyac_cli.py --pr 4.0 --mdot 25 --rpm-max 18000 --utip-max 460 \
     --rtip-max 400 --rounds 5 --n-init 320 --outdir runs/pr4
 
@@ -185,7 +185,8 @@ Salidas de la fase C#: un STL por pieza más las vistas de unión
 
 | Módulo | Capa | Rol |
 |---|---|---|
-| `physics_core.py` | 1 | Núcleo físico multi-fidelidad: meanline L0 de stage-stacking (θ 13-D, correlaciones Lieblein/Howell/Koch, corrección de Reynolds por fila, $g(\theta)$ ×8, mapa fuera de diseño), spool axial L1 de turbo-design (TD3) con patches y timeout por solve, calibración afín L2, caché, features físicos. |
+| `physics_core.py` | 1 | Núcleo físico multi-fidelidad: meanline L0 de stage-stacking (θ 15-D, correlaciones Lieblein/Howell/Koch, corrección de Reynolds por fila, $g(	heta)$ ×9, mapa fuera de diseño), calibración afín L2, caché, features físicos. |
+| `scm_core.py` | 1 (L1) | Through-flow por curvatura de líneas de corriente: equilibrio radial completo con el término de curvatura meridional sobre 5–11 líneas, continuidad por tubo de corriente, cierre por ángulos del álabe, Euler por línea, pérdidas resueltas en el span. Sin dependencias externas. |
 | `structures_core.py` | 1s | Núcleo estructural L0s: biblioteca de materiales con derating térmico, solver de disco rotatorio 1-D por etapa (validado contra Timoshenko), márgenes de raíz de álabe (K_t de Peterson), AN², estallido y Campbell (paso de álabes), métricas Goodman + cribado de flutter. **Restricción dura del optimizador** vía `DesignSpec.material`. |
 | `neural_optimizer.py` | 2–4 | Deep ensemble con incertidumbre + quality gate, NSGA-II con dominancia restringida de Deb, adquisición LCB + k-means, orquestador `design(spec)` — portado de Phy-CC (núcleo agnóstico al dominio). |
 | `blade_profiles.py` | 5a | Secciones NACA-65 / DCA sobre comba de arco circular, incidencia de diseño Lieblein/Aungier, desviación de Carter, punto fijo de ángulos metálicos. |
@@ -197,7 +198,7 @@ Salidas de la fase C#: un STL por pieza más las vistas de unión
 | `AxialCompressorDesigner.Example/` | 5c | Ejecutable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | producto | CLI end-to-end: espec → diseño → geometría → informe → dataset [→ STLs vía --stl/--voxel]. |
 | `contract_schema.py` | 5a | JSON Schema publicado de `phyac-axial-2` + validador sin dependencias (también CLI: `python contract_schema.py <contrato>`). |
-| `test_phyac.py` | VV&UQ | Suite de verificación: 153 checks (triángulos, conservación, continuidad de g, perfiles, esquema del contrato, solver de disco, núcleo del optimizador, spool L1, interferencias del ensamble). |
+| `test_phyac.py` | VV&UQ | Suite de verificación: 163 checks (triángulos, conservación, continuidad de g, perfiles, esquema del contrato, solver de disco, núcleo del optimizador, through-flow L1, equilibrio radial, interferencias del ensamble). |
 | `validation/` | VV&UQ | Campaña de validación vs NASA Stage 35, Rotor 37/67 y GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## API Python (capas 1–5b)
@@ -288,9 +289,11 @@ idéntico.
 
 ## Dependencias
 
-- **Capas 1–5b (Python ≥ 3.10)**: núcleo **solo NumPy**. Opcionales con
-  degradación elegante: `turbo-design` v1.4.2 + `cantera` (activa la
-  fidelidad L1), `matplotlib` (figuras del informe), `cadquery` (STEP).
+- **Capas 1–5b (Python ≥ 3.10)**: núcleo **solo NumPy** — L1 incluida:
+  desde la fase 11 el through-flow por curvatura de líneas de corriente
+  es propio (`scm_core.py`), así que no hay dependencia externa que
+  instalar ni que pueda faltar en silencio. Opcionales con degradación
+  elegante: `matplotlib` (figuras del informe), `cadquery` (STEP).
 - **Capa 5c (C#)**: .NET 9 SDK + runtime x64. PicoGK se resuelve como
   paquete NuGet (`PicoGK` v2.2.0).
 
@@ -299,7 +302,7 @@ Licencias de terceros: ver [README.md](README.md#third-party-licenses).
 ## Verificación y validación
 
 ```bash
-python test_phyac.py               # verificación: 153 checks
+python test_phyac.py               # verificación: 163 checks
 python validation/validate.py      # validación: máquinas NASA → RESULTS.md
 python data_pipeline.py            # anclas de datos: rebuild + SHA-256
 python contract_schema.py runs/x/geometry/axial_compressor.json   # contrato
@@ -343,11 +346,17 @@ predicción de pérdidas → (η, PR). Tabla vigente en
 - **Modelo de choque L0**: promedio de choque normal en dos puntos con
   K_SHOCK = 0.70 calibrado en Rotor 37/67; sobre M_punta ≈ 1.5 es
   extrapolación.
-- **L1 (turbo-design 1.4.2)** requiere los patches documentados en
-  `physics_core.py` §3 y corre en modo meanline (1 streamline) dentro de
-  un subproceso con timeout; cada etapa se transforma conservando el
-  trabajo. Medido: 95% de solves exitosos, correlación PR r ≈ 0.95 vs L0,
-  sesgo sistemático ≈ 0.94 absorbido por `HiFiCalibration`.
+- **L1 (`scm_core.py`)** resuelve la ecuación de equilibrio radial
+  COMPLETA —con el término de curvatura— sobre 9 líneas de corriente, con
+  continuidad por tubo de corriente y los ángulos metálicos del álabe
+  congelados de la ley de torbellino de diseño. Es un peldaño de verdad:
+  con vórtice libre reproduce el meanline con +0.1% en PR (verificación),
+  y con torbellino controlado se separa varios por ciento porque ahí la
+  forma cerrada del meanline es solo aproximada. Rechaza en vez de
+  adivinar: una estación que no puede pasar el gasto, o un perfil de Cm
+  que el limitador numérico sigue sujetando al converger, lanzan y el
+  punto degrada a L0 con el motivo en `source`. Sin calificar todavía
+  contra medida — el mismo hueco que el mapa fuera de diseño.
 - **Álabes**: comba de arco circular con espesor NACA 65-010 / biconvexo,
   impresos como loft sólido del perfil (filas < 2 vóxeles caen a lámina
   de espesor uniforme con WARNING en el log); para álabes custom fieles
@@ -357,6 +366,31 @@ predicción de pérdidas → (η, PR). Tabla vigente en
   imprimir las piezas.
 
 ## Historia
+
+- **2026-08-16 — L1 pasa a ser un peldaño de verdad: through-flow propio
+  por curvatura de líneas de corriente (fase 11 · F-01/H2)**:
+  `scm_core.py` sustituye a `turbo-design`. Resuelve la **ecuación de
+  equilibrio radial COMPLETA**, con término de curvatura meridional,
+  sobre 9 líneas de corriente repartidas por fracción de gasto, con
+  continuidad por tubo de corriente, los ángulos metálicos del álabe
+  congelados de la ley de torbellino de diseño, **Euler por línea de
+  corriente** (el trabajo deja de ser uniforme en el span) y pérdidas
+  calculadas donde ocurren — choque solo donde el Mach relativo lo
+  justifica, holgura en el 25% exterior del span, débito de pared de
+  Koch & Smith en las bandas de pared. Lo que sustituye era
+  `turbo-design` 1.4.2 con tres parches, forzado a `num_streamlines=1`
+  porque con más su ODE de equilibrio radial se colgaba: L1 era otro
+  meanline, lanzado en un subproceso con timeout, y muerto en silencio
+  por una dependencia que el paquete no declara. **Verificación**: con
+  curvatura nula el ODE integrado numéricamente reproduce la forma
+  cerrada de la fase 9.1 con desvío 2e-16 en vórtice libre; sobre el θ de
+  referencia L1 queda a +0.13% en PR de L0 con vórtice libre (donde el
+  meanline es exacto) y a −6.5% con torbellino controlado (donde no lo
+  es). Rechaza en vez de adivinar: una estación bloqueada, o un perfil de
+  Cm que el limitador numérico sigue sujetando al converger, lanzan y el
+  punto degrada a L0 con el motivo anotado. **El extra `l1` desaparece**
+  — todo el lado Python vuelve a ser solo NumPy, L1 incluida, y corre en
+  proceso a ~3 s por máquina. Verificación 153 → 163 checks.
 
 - **2026-08-16 — la capa 5c vuelve a describir la misma máquina que la
   vía CadQuery (fase 10 · G-01)**: el STL (ruta de fabricación) y el STEP
