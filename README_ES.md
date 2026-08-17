@@ -198,7 +198,7 @@ Salidas de la fase C#: un STL por pieza más las vistas de unión
 | `AxialCompressorDesigner.Example/` | 5c | Ejecutable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | producto | CLI end-to-end: espec → diseño → geometría → informe → dataset [→ STLs vía --stl/--voxel]. |
 | `contract_schema.py` | 5a | JSON Schema publicado de `phyac-axial-2` + validador sin dependencias (también CLI: `python contract_schema.py <contrato>`). |
-| `test_phyac.py` | VV&UQ | Suite de verificación: 165 checks (triángulos, conservación, continuidad de g, perfiles, esquema del contrato, solver de disco, núcleo del optimizador, through-flow L1, equilibrio radial, interferencias del ensamble). |
+| `test_phyac.py` | VV&UQ | Suite de verificación: 171 checks (triángulos, conservación, continuidad de g, perfiles, esquema del contrato, solver de disco, núcleo del optimizador, through-flow L1, equilibrio radial, interferencias del ensamble). |
 | `validation/` | VV&UQ | Campaña de validación vs NASA Stage 35, Rotor 37/67 y GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## API Python (capas 1–5b)
@@ -302,7 +302,7 @@ Licencias de terceros: ver [README.md](README.md#third-party-licenses).
 ## Verificación y validación
 
 ```bash
-python test_phyac.py               # verificación: 165 checks
+python test_phyac.py               # verificación: 171 checks
 python validation/validate.py      # validación: máquinas NASA → RESULTS.md
 python data_pipeline.py            # anclas de datos: rebuild + SHA-256
 python contract_schema.py runs/x/geometry/axial_compressor.json   # contrato
@@ -368,6 +368,27 @@ predicción de pérdidas → (η, PR). Tabla vigente en
 
 ## Historia
 
+- **2026-08-17 — el mapa queda calificado contra medida (fase 12 ·
+  F-02)**: la campaña de validación solo calificaba el PUNTO DE DISEÑO,
+  mientras que el margen de bombeo se había convertido —desde la fase 9—
+  en la restricción dura que más recorta el espacio. El AGARD AR-355
+  §2.1.4.1 da dos números medidos del Rotor 37 al 100% como TEXTO, no
+  como figura: `ṁ_choke = 20.93 kg/s` y un gasto de near-stall
+  determinado experimentalmente en `ṁ/ṁ_choke = 0.925`. Entre los dos
+  acotan todo el rango de gasto de la máquina. Un tipo de caso nuevo
+  `OFFDESIGN` en `machines.py` califica ambos. **El criterio de bombeo
+  PASA**: el modelo sitúa el stall al 90.4% del choke frente al 92.5%
+  medido (−2.2%, objetivo ±3%) — el número que más pesaba con menos
+  respaldo ya tiene alguno. **El de choke NO**: +6.6% de más, y de forma
+  sistemática — el test de Mach AXIAL `MX_CHOKE = 0.78` declara choke
+  mucho después de que la garganta del pasaje de un rotor transónico se
+  haya bloqueado de verdad (M_rel de punta 1.49). El mapa queda desplazado
+  hacia gastos altos por el lado del choke aunque el punto de bombeo esté
+  bien. Arreglarlo pide un criterio de garganta con Mach relativo
+  (G-09/F-07) y revalidar las cuatro máquinas, así que no se hace de paso;
+  mientras tanto `--strict` corre contra una guarda interina declarada.
+  Verificación 165 → 171 checks.
+
 - **2026-08-16 — L1 pasa a ser un peldaño de verdad: through-flow propio
   por curvatura de líneas de corriente (fase 11 · F-01/H2)**:
   `scm_core.py` sustituye a `turbo-design`. Resuelve la **ecuación de
@@ -403,7 +424,7 @@ predicción de pérdidas → (η, PR). Tabla vigente en
   densidad, que cambia la siguiente estación; sobre siete u ocho etapas se
   compone hasta ±27% de PR. Una ventana declarada `PR_WINDOW` (±15%)
   rechaza esos puntos en vez de devolver el número. Verificación
-  153 → 165 checks.
+  153 → 171 checks.
 
 - **2026-08-16 — la capa 5c vuelve a describir la misma máquina que la
   vía CadQuery (fase 10 · G-01)**: el STL (ruta de fabricación) y el STEP

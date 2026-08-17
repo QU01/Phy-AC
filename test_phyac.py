@@ -1266,6 +1266,43 @@ else:
               len(ps.compare_profiles(_cs20, _py_bad)) >= 2)
 
 # ==========================================================================
+print("— T22 · fuera de diseño calificado contra medida (fase 12 · F-02)")
+# Hasta la fase 12 la campaña de validación solo calificaba el PUNTO DE
+# DISEÑO. El margen de bombeo, que desde la fase 9 es la restricción dura
+# que más recorta el espacio, no estaba contrastado con NINGÚN dato
+# medido. Esto comprueba que la maquinaria de calificación del mapa
+# existe, corre y no se degrada en silencio.
+from validation.machines import OFFDESIGN as _OD      # noqa: E402
+from validation.validate import run_offdesign as _ro  # noqa: E402
+
+check("hay al menos un caso de FUERA DE DISEÑO con fuente citada",
+      len(_OD) >= 1
+      and all(o.get("source") and o.get("measured") for o in _OD),
+      f"{len(_OD)} caso(s)")
+_r22 = [_ro(o) for o in _OD]
+_keys22 = {it["key"] for r in _r22 for it in r["items"]}
+check("se califican los DOS extremos del rango de gasto, no solo uno",
+      {"mdot_choke", "stall_over_choke"} <= _keys22,
+      ", ".join(sorted(_keys22)))
+check("cada cantidad declara tolerancia OBJETIVO y guarda interina",
+      all(0 < it["tol"] <= it["guard"] for r in _r22 for it in r["items"]))
+# Regresión: los deltas medidos hoy. No se comprueba PASS (el choke FALLA
+# el objetivo del 5% y eso está documentado), sino que no se muevan a
+# peor en silencio.
+_d22 = {it["key"]: it["d_rel"] for r in _r22 for it in r["items"]}
+check("el criterio de BOMBEO sitúa el stall donde lo midió NASA "
+      "(ṁ_stall/ṁ_choke)",
+      abs(_d22["stall_over_choke"]) < 0.03,
+      f"modelo/medido = {1 + _d22['stall_over_choke']:.3f} "
+      f"({100 * _d22['stall_over_choke']:+.2f}% vs 0.925 medido)")
+check("el criterio de CHOKE sigue siendo optimista y no ha empeorado",
+      0.0 < _d22["mdot_choke"] < 0.12,
+      f"{100 * _d22['mdot_choke']:+.2f}% (objetivo ±5%, guarda ±12%) — "
+      "brecha ABIERTA, ver docs/VALIDATION.md")
+check("todas las cantidades dentro de la guarda con la que corre --strict",
+      all(it["ok_guard"] for r in _r22 for it in r["items"]))
+
+# ==========================================================================
 print(f"\n{_n_pass}/{_n_pass + _n_fail} checks OK"
       + (f" — {_n_fail} FALLOS" if _n_fail else ""))
 sys.exit(1 if _n_fail else 0)

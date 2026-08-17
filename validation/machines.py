@@ -139,6 +139,68 @@ MACHINES = [
 ]
 
 # ---------------------------------------------------------------------------
+# FUERA DE DISEÑO (F-02, fase 12): calificación del MAPA contra medida.
+# ---------------------------------------------------------------------------
+# Hasta la fase 12 la campaña calificaba solo el PUNTO DE DISEÑO de cuatro
+# máquinas. Ni una speedline, ni un límite de bombeo, ni un gasto de choke
+# estaban contrastados con dato medido — y sin embargo el margen de bombeo
+# es desde la fase 9 la restricción DURA que más recorta el espacio de
+# diseño (en la corrida de PR 4 el optimizador cambió PR 4.04 por 3.35
+# para cumplirla). Una restricción con ese peso sin calificar era el
+# riesgo abierto más grande del proyecto.
+#
+# Cada entrada se ENGANCHA a una máquina de MACHINES por nombre (reusa su
+# espec, su holgura publicada y su θ invertido) y declara cantidades de
+# FUERA DE DISEÑO medidas, con sus propias tolerancias.
+#
+# Campos:
+#   machine     nombre exacto de la entrada de MACHINES
+#   speed_frac  fracción de velocidad de diseño del punto medido
+#   measured    dict de cantidades medidas. Soportadas:
+#                 mdot_choke        gasto de choke [kg/s] a esa velocidad
+#                 stall_over_choke  ṁ_stall / ṁ_choke (ancho del mapa)
+#   tol         tolerancia OBJETIVO (lo que un meanline debería lograr)
+#   guard       tolerancia INTERINA con la que --strict no falla mientras
+#               la brecha esté documentada y abierta (mismo mecanismo que
+#               ETA_GUARD_PTS)
+#   source      cita literal y verificable
+#
+# LO QUE FALTA (y por qué): el PR de pico y la PENDIENTE de la speedline.
+# El AGARD publica esas dos como la Figura 2.4 (curvas de PR y η frente a
+# ṁ/ṁ_choke), no como tabla; los 13 puntos medidos hay que pedírselos a
+# NASA («These data ... may be obtained by mailing a request to Dr K. L.
+# Suder», §2.1.5). Lo que sí aparece como FRASE explícita —y es lo que se
+# califica aquí— son los dos extremos del rango de gasto, que es
+# justamente lo que el margen de bombeo pone en juego.
+# ---------------------------------------------------------------------------
+OFFDESIGN = [
+    dict(
+        machine="NASA Rotor 37",
+        speed_frac=1.0,
+        measured=dict(mdot_choke=20.93, stall_over_choke=0.925),
+        tol=dict(mdot_choke_rel=0.05, stall_over_choke_rel=0.03),
+        guard=dict(mdot_choke_rel=0.12, stall_over_choke_rel=0.06),
+        source=("AGARD AR-355 (Dunham ed., 1998), §2.1.4.1 «Test "
+                "Conditions»: «This near stall flow rate was "
+                "experimentally determined to be ṁ/ṁ_choke = 0.925 [...] "
+                "The experimental ṁ_choke as determined by NASA was "
+                "20.93 kg/s». Mismo documento: holgura de punta 0.0356 cm "
+                "a velocidad de diseño (la que ya inyecta la entrada de "
+                "MACHINES). Punto de diseño: 20.188 kg/s, PR 2.106, "
+                "η_ad 0.877, 17 188.7 rpm."),
+        notes=("Las dos cantidades acotan el RANGO DE GASTO del mapa al "
+               "100% de velocidad: de 19.36 a 20.93 kg/s, un ancho del "
+               "7.5% del gasto de choke. El punto de diseño (20.19 kg/s) "
+               "cae al 96.5% del choke, así que el rotor tiene solo un "
+               "3.7% de margen de gasto por encima del diseño y un 4.0% "
+               "por debajo. Es exactamente lo que el margen de bombeo "
+               "—restricción dura desde la fase 9— pone en juego, y hasta "
+               "ahora no estaba contrastado con ningún dato medido."),
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
 # Anclas de regresión internas: NO son mediciones — congelan la salida
 # actual del meanline para detectar deriva silenciosa de la física.
 # Actualizarlas es una decisión consciente que debe citar la corrección

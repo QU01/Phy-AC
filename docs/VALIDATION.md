@@ -1,7 +1,7 @@
 # Phy-AC — Campaña de validación
 
 Distinción VV&UQ del proyecto: `test_phyac.py` VERIFICA (¿resolvemos bien
-las ecuaciones? — 165 checks); `validation/validate.py` VALIDA (¿las
+las ecuaciones? — 171 checks); `validation/validate.py` VALIDA (¿las
 ecuaciones correctas? — contra máquinas NASA medidas). CI corre ambos en
 estricto.
 
@@ -34,6 +34,55 @@ desglose de pérdidas de la etapa (sin estátor).
 
 Las cuatro pasan con el modelo de la fase 9, que sustituye tres ajustes
 por física citada (§3). El peor uso de tolerancia es del 93%.
+
+### Fuera de diseño (fase 12 · F-02)
+
+Primera calificación del MAPA contra medida. Fuente: AGARD AR-355
+§2.1.4.1 — «This near stall flow rate was experimentally determined to be
+ṁ/ṁ_choke = 0.925 [...] The experimental ṁ_choke as determined by NASA
+was 20.93 kg/s», Rotor 37 al 100% de velocidad equivalente de diseño.
+
+| Cantidad | Modelo | Medido | Δ | Objetivo | |
+|---|---|---|---|---|---|
+| ṁ_choke [kg/s] | 22.31 | 20.93 | **+6.6%** | ±5% | FAIL |
+| ṁ_stall/ṁ_choke | 0.904 | 0.925 | −2.2% | ±3% | PASS |
+
+**El criterio de BOMBEO queda calificado**: sitúa el stall a un 90.4% del
+choke frente al 92.5% medido. Ese era el número que más pesaba sin
+respaldo — el margen de bombeo es restricción dura desde la fase 9 y
+decide qué máquinas son viables. Que caiga dentro del ±3% sobre un rotor
+transónico es el resultado más importante de esta fase.
+
+**El criterio de CHOKE no**: el modelo deja pasar un 6.6% más de gasto
+del que la máquina traga. `MX_CHOKE = 0.78` declara choke cuando el Mach
+AXIAL de la estación llega a 0.78, y en un rotor transónico (M_rel de
+punta 1.49) la garganta del pasaje se bloquea mucho antes. El efecto es
+sistemático y crece con el Mach relativo:
+
+| Máquina | M_rel punta | ṁ_choke/ṁ_diseño modelo |
+|---|---|---|
+| NASA Rotor 67 | 1.34 | 1.151 |
+| NASA Rotor 37 | 1.49 | 1.105 (**medido 1.037**) |
+| NASA Stage 35 | 1.39 | 1.089 |
+| GE/NASA E³ (10 et.) | 1.32 | 1.030 |
+
+Consecuencia práctica: el mapa está desplazado hacia gastos altos por el
+lado del choke, así que el ANCHO de la speedline sale optimista aunque la
+posición relativa del bombeo sea correcta. Arreglarlo es un criterio de
+garganta con Mach RELATIVO (pendientes G-09 y F-07), no un ajuste de
+constante — y exige revalidar las cuatro máquinas y las anclas, así que
+no se hace de paso.
+
+Mientras tanto `--strict` corre contra una guarda interina (±12% en
+choke, ±6% en el ratio), igual que la guarda de η: el CI no se queda rojo
+por una brecha documentada y abierta, pero el objetivo real (±5%) se
+reporta siempre.
+
+**Lo que falta para cerrar F-02**: el PR de pico y la PENDIENTE de la
+speedline. El AGARD las publica como la Figura 2.4 (curvas de PR y η
+frente a ṁ/ṁ_choke), no como tabla; los 13 puntos medidos hay que
+pedírselos a NASA (§2.1.5). Y falta velocidad parcial: todo lo anterior
+es al 100%.
 
 Tabla viva en `validation/RESULTS.md` (regenerar tras tocar
 `physics_core.py`).
@@ -149,12 +198,14 @@ PR 2.7160→2.7616, η_poly 0.8871→0.9013.
 
 ## 5. Pendientes
 
-- **Validar el FUERA DE DISEÑO.** La fase 9 hizo el mapa físico (choke
-  que limita gasto, línea de trabajo de Dixon ec. 5.26b, bombeo por el
-  criterio de Koch o por pendiente nula, margen en gasto) pero NINGUNA
-  de esas curvas está calificada contra medida. Es el hueco nº 1 de la
-  campaña. Fuente disponible: AGARD AR-355 (Rotor 37) — digitalizar sus
-  speedlines y añadir un criterio `kind="speedline"` a machines.py.
+- **Cerrar el FUERA DE DISEÑO.** La fase 12 calificó los dos extremos
+  del rango de gasto del Rotor 37 al 100% (§2): el criterio de bombeo
+  PASA (−2.2%), el de choke NO (+6.6%). Queda: (a) el criterio de
+  garganta con Mach relativo que arregla el choke — pendientes G-09/F-07,
+  con revalidación de las cuatro máquinas y las anclas; (b) el PR de pico
+  y la pendiente de la speedline, que el AGARD publica solo como figura
+  (los 13 puntos medidos se piden a NASA, AR-355 §2.1.5); (c) velocidad
+  PARCIAL, donde viven los VSV y el sangrado y no hay ni un dato.
 - Digitalizar speedlines completas de Rotor 37 (choke mdot ±2%) cuando
   haya fuente estable (las URL de turbmodels rotaron — 2026-07).
 - Verificar la entrada E³ contra el CR original (distribución por etapa

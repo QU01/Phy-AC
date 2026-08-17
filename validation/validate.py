@@ -38,8 +38,8 @@ import numpy as np
 
 import physics_core as pc
 from physics_core import CP, GAMMA, Fidelity, _meanline, evaluate
-from validation.machines import (MACHINES, REGRESSION_ANCHORS, PR_TOL_REL,
-                                 ETA_TOL_PTS, ETA_GUARD_PTS)
+from validation.machines import (MACHINES, OFFDESIGN, REGRESSION_ANCHORS,
+                                 PR_TOL_REL, ETA_TOL_PTS, ETA_GUARD_PTS)
 
 KIND_LABEL = {
     "rotor": "rotor aislado (t-t)",
@@ -184,6 +184,53 @@ def run_machine(m: dict) -> dict:
     )
 
 
+def run_offdesign(o: dict) -> dict:
+    """Califica una cantidad de FUERA DE DISEÑO contra medida (F-02).
+
+    Reusa la entrada de MACHINES a la que se engancha: mismo θ invertido,
+    misma holgura publicada. Lo que cambia es QUÉ se compara — aquí el
+    límite de gasto del mapa, no el punto de diseño.
+    """
+    m = next((x for x in MACHINES if x["name"] == o["machine"]), None)
+    if m is None:
+        raise KeyError(f"OFFDESIGN apunta a una máquina que no existe: "
+                       f"{o['machine']}")
+    eps_saved = pc.TIP_CLEARANCE_MM
+    if "eps_tip_mm" in m:
+        pc.TIP_CLEARANCE_MM = float(m["eps_tip_mm"])
+    try:
+        theta = build_theta(m["spec"], m["measured"], m.get("slopes"))
+        rec = evaluate(theta, fidelity=Fidelity.L0, use_cache=False,
+                       calibrate=False)
+        rpm = float(theta[1]) * float(o.get("speed_frac", 1.0))
+        mdot_d = float(theta[12])
+        mdot_choke = pc._choke_mdot(theta, rpm, rec["frozen"], mdot_d)
+        # Bombeo por el MISMO criterio dual que usa el mapa (capacidad de
+        # Koch agotada O pendiente nula de la speedline), sobre la misma
+        # speedline. Comparar el ancho del mapa exige que los dos extremos
+        # salgan del mismo barrido.
+        mdot_surge, _srg = pc._surge_mdot(theta, rpm, rec["frozen"], mdot_d,
+                                          mdot_choke)
+        model = dict(mdot_choke=mdot_choke,
+                     stall_over_choke=mdot_surge / max(mdot_choke, 1e-9),
+                     mdot_surge=mdot_surge)
+    finally:
+        pc.TIP_CLEARANCE_MM = eps_saved
+
+    items = []
+    for key, meas in o["measured"].items():
+        mod = model[key]
+        d = (mod - meas) / meas
+        tol = o.get("tol", {}).get(f"{key}_rel", 0.05)
+        guard = o.get("guard", {}).get(f"{key}_rel", tol)
+        items.append(dict(key=key, model=mod, meas=meas, d_rel=d,
+                          tol=tol, guard=guard,
+                          ok=abs(d) < tol, ok_guard=abs(d) < guard))
+    return dict(name=f"{o['machine']} · {100 * o.get('speed_frac', 1.0):.0f}% N",
+                machine=o["machine"], items=items, offdesign=o,
+                mdot_design=mdot_d, record=rec)
+
+
 def run_anchor(a: dict) -> dict:
     theta = np.asarray(a["theta"], dtype=float)
     rec = evaluate(theta, fidelity=Fidelity.L0, use_cache=False,
@@ -225,7 +272,7 @@ def _fmt_status(ok: bool) -> str:
 
 
 def write_results_md(results: list[dict], anchors: list[dict],
-                     path: str) -> None:
+                     path: str, offd: list[dict] | None = None) -> None:
     lines = [
         "# Resultados de validación — Quasar Phy-AC",
         "",
@@ -254,6 +301,30 @@ def write_results_md(results: list[dict], anchors: list[dict],
             f"({r['eta_key']}) | {r['eta_meas']:.3f} | "
             f"{100 * r['deta']:+.1f} | {_fmt_status(r['PR_pass'])} | "
             f"{_fmt_status(r['eta_pass'])} |")
+    # --- fuera de diseño (F-02) -------------------------------------------
+    if offd:
+        lines += [
+            "", "## Fuera de diseño (F-02)", "",
+            "Primera calificación del MAPA contra medida. Hasta la fase 12 "
+            "la campaña solo calificaba el punto de diseño, y sin embargo "
+            "el margen de bombeo es desde la fase 9 la restricción DURA "
+            "que más recorta el espacio de diseño.", "",
+            "| Caso | Cantidad | Modelo | Medido | Δ | Objetivo | Guarda | |",
+            "|---|---|---|---|---|---|---|---|",
+        ]
+        for o in offd:
+            for it in o["items"]:
+                lines.append(
+                    f"| {o['name']} | `{it['key']}` | {it['model']:.3f} | "
+                    f"{it['meas']:.3f} | {it['d_rel']:+.2%} | "
+                    f"±{it['tol']:.0%} | ±{it['guard']:.0%} | "
+                    f"{_fmt_status(it['ok'])} |")
+        for o in offd:
+            od = o["offdesign"]
+            lines += ["", f"**{o['name']}** — fuente: {od['source']}", ""]
+            if od.get("notes"):
+                lines += [od["notes"], ""]
+
     lines += ["", "### Detalle por máquina", ""]
     for r in results:
         m = r["machine"]
@@ -308,6 +379,7 @@ def main(argv=None) -> int:
         return 0
 
     results = [run_machine(m) for m in MACHINES]
+    offd = [run_offdesign(o) for o in OFFDESIGN]
     anchors = [run_anchor(a) for a in REGRESSION_ANCHORS]
 
     print(f"{'Máquina':26s} {'plano':8s} {'PR mod/med':>14s} {'ΔPR':>8s} "
@@ -322,6 +394,20 @@ def main(argv=None) -> int:
     for a in anchors:
         print(f"{a['name']:26s} {'ancla':8s} {'':>14s} {'':>8s} {'':>14s} "
               f"{'':>7s}  {_fmt_status(a['ok'])}")
+
+    if offd:
+        print()
+        print(f"{'Fuera de diseño (F-02)':34s} {'cantidad':13s} "
+              f"{'modelo/medido':>16s} {'Δ':>8s}  obj")
+        for o in offd:
+            for it in o["items"]:
+                print(f"{o['name']:34s} {it['key']:13s} "
+                      f"{it['model']:7.2f}/{it['meas']:.2f} "
+                      f"{it['d_rel']:+8.2%}  "
+                      f"{_fmt_status(it['ok'])}"
+                      + ("" if it["ok"] else
+                         f"  (guarda ±{100 * it['guard']:.0f}%: "
+                         f"{_fmt_status(it['ok_guard'])})"))
 
     if not args.no_write:
         out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
