@@ -198,7 +198,7 @@ Salidas de la fase C#: un STL por pieza más las vistas de unión
 | `AxialCompressorDesigner.Example/` | 5c | Ejecutable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | producto | CLI end-to-end: espec → diseño → geometría → informe → dataset [→ STLs vía --stl/--voxel]. |
 | `contract_schema.py` | 5a | JSON Schema publicado de `phyac-axial-2` + validador sin dependencias (también CLI: `python contract_schema.py <contrato>`). |
-| `test_phyac.py` | VV&UQ | Suite de verificación: 171 checks (triángulos, conservación, continuidad de g, perfiles, esquema del contrato, solver de disco, núcleo del optimizador, through-flow L1, equilibrio radial, interferencias del ensamble). |
+| `test_phyac.py` | VV&UQ | Suite de verificación: 177 checks (triángulos, conservación, continuidad de g, perfiles, esquema del contrato, solver de disco, núcleo del optimizador, through-flow L1, equilibrio radial, interferencias del ensamble). |
 | `validation/` | VV&UQ | Campaña de validación vs NASA Stage 35, Rotor 37/67 y GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## API Python (capas 1–5b)
@@ -302,7 +302,7 @@ Licencias de terceros: ver [README.md](README.md#third-party-licenses).
 ## Verificación y validación
 
 ```bash
-python test_phyac.py               # verificación: 171 checks
+python test_phyac.py               # verificación: 177 checks
 python validation/validate.py      # validación: máquinas NASA → RESULTS.md
 python data_pipeline.py            # anclas de datos: rebuild + SHA-256
 python contract_schema.py runs/x/geometry/axial_compressor.json   # contrato
@@ -387,7 +387,19 @@ predicción de pérdidas → (η, PR). Tabla vigente en
   bien. Arreglarlo pide un criterio de garganta con Mach relativo
   (G-09/F-07) y revalidar las cuatro máquinas, así que no se hace de paso;
   mientras tanto `--strict` corre contra una guarda interina declarada.
-  Verificación 165 → 171 checks.
+  Y se siguió la característica completa: NASA publica los 13 puntos
+  medidos como **tabla** (Turbulence Modeling Resource, `rotor 37 exp
+  data.xlsx`), y una digitalización independiente de las figuras del
+  AGARD coincide con ella en 0.003 de PR y 0.001 de η. Punto a punto, el
+  modelo sigue la línea medida con **2.1% máximo en PR** (−1.1% de media)
+  y acierta la **pendiente dentro del 5%** — la pendiente es la que mueve
+  el punto de operación cuando cambia la contrapresión, y por tanto la
+  que hace que el margen de bombeo signifique algo. Falla en **η con
+  4.4 pts en el extremo de choke**, convergiendo a la medida cerca del
+  bombeo: cobra demasiada pérdida a incidencia negativa, lo que apunta
+  directo al bucket de incidencia. **Seis de ocho cantidades dentro de
+  objetivo**, las dos que fallan con diagnóstico.
+  Verificación 165 → 177 checks.
 
 - **2026-08-16 — L1 pasa a ser un peldaño de verdad: through-flow propio
   por curvatura de líneas de corriente (fase 11 · F-01/H2)**:
@@ -424,7 +436,7 @@ predicción de pérdidas → (η, PR). Tabla vigente en
   densidad, que cambia la siguiente estación; sobre siete u ocho etapas se
   compone hasta ±27% de PR. Una ventana declarada `PR_WINDOW` (±15%)
   rechaza esos puntos en vez de devolver el número. Verificación
-  153 → 171 checks.
+  153 → 177 checks.
 
 - **2026-08-16 — la capa 5c vuelve a describir la misma máquina que la
   vía CadQuery (fase 10 · G-01)**: el STL (ruta de fabricación) y el STEP

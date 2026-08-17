@@ -38,8 +38,9 @@ import numpy as np
 
 import physics_core as pc
 from physics_core import CP, GAMMA, Fidelity, _meanline, evaluate
-from validation.machines import (MACHINES, OFFDESIGN, REGRESSION_ANCHORS,
-                                 PR_TOL_REL, ETA_TOL_PTS, ETA_GUARD_PTS)
+from validation.machines import (MACHINES, OFFDESIGN, SPEEDLINES,
+                                 REGRESSION_ANCHORS, PR_TOL_REL,
+                                 ETA_TOL_PTS, ETA_GUARD_PTS)
 
 KIND_LABEL = {
     "rotor": "rotor aislado (t-t)",
@@ -231,6 +232,68 @@ def run_offdesign(o: dict) -> dict:
                 mdot_design=mdot_d, record=rec)
 
 
+def run_speedline(key: str) -> dict:
+    """Califica la SPEEDLINE completa punto a punto contra medida (F-02).
+
+    Los extremos del rango de gasto los cubre `run_offdesign`. Esto
+    responde las otras dos preguntas de F-02: ¿acierta el modelo el PR y
+    el η a lo largo de la característica, y acierta su PENDIENTE? La
+    pendiente es la que gobierna cómo se mueve el punto de operación
+    cuando cambia la contrapresión, así que es la que decide si el margen
+    de bombeo significa algo.
+
+    Se evalúa con la GEOMETRÍA CONGELADA del diseño (igual que el mapa) y
+    se extrae la misma métrica que el punto de diseño de esa máquina
+    (para un caso `rotor`, el PR/η del rotor desde el desglose de
+    pérdidas), porque los valores medidos son del rotor aislado.
+    """
+    sl = SPEEDLINES[key]
+    m = next((x for x in MACHINES if x["name"] == sl["machine"]), None)
+    if m is None:
+        raise KeyError(f"SPEEDLINES['{key}'] apunta a una máquina que no "
+                       f"existe: {sl['machine']}")
+    eps_saved = pc.TIP_CLEARANCE_MM
+    if "eps_tip_mm" in m:
+        pc.TIP_CLEARANCE_MM = float(m["eps_tip_mm"])
+    try:
+        theta = build_theta(m["spec"], m["measured"], m.get("slopes"))
+        rec_d = evaluate(theta, fidelity=Fidelity.L0, use_cache=False,
+                         calibrate=False)
+        rpm = float(theta[1]) * float(sl.get("speed_frac", 1.0))
+        rows = []
+        for lbm, kg, pr_m, tr_m, eta_m, tag in sl["points"]:
+            rec = pc.offdesign(theta, rpm, kg, frozen=rec_d["frozen"])
+            mod = model_metrics(rec, m["spec"], m["kind"])
+            rows.append(dict(mdot=kg, tag=tag,
+                             PR_meas=pr_m, PR_model=mod["PR"],
+                             dPR_rel=mod["PR"] / pr_m - 1.0,
+                             eta_meas=eta_m, eta_model=mod["eta_isen"],
+                             deta=mod["eta_isen"] - eta_m,
+                             min_SM=rec["min_SM"]))
+    finally:
+        pc.TIP_CLEARANCE_MM = eps_saved
+
+    mdots = np.array([r["mdot"] for r in rows])
+    # Pendiente dPR/dṁ por mínimos cuadrados sobre TODO el rango medido:
+    # es la forma de la característica, no la diferencia entre extremos.
+    sl_meas = float(np.polyfit(mdots, [r["PR_meas"] for r in rows], 1)[0])
+    sl_mod = float(np.polyfit(mdots, [r["PR_model"] for r in rows], 1)[0])
+    return dict(
+        name=f"{sl['machine']} · {100 * sl.get('speed_frac', 1.0):.0f}% N "
+             f"· {len(rows)} puntos",
+        key=key, speedline=sl, rows=rows,
+        pr_max_abs=max(abs(r["dPR_rel"]) for r in rows),
+        pr_mean=sum(r["dPR_rel"] for r in rows) / len(rows),
+        eta_max_abs=max(abs(r["deta"]) for r in rows),
+        pr_peak_meas=max(r["PR_meas"] for r in rows),
+        pr_peak_model=max(r["PR_model"] for r in rows),
+        eta_peak_meas=max(r["eta_meas"] for r in rows),
+        eta_peak_model=max(r["eta_model"] for r in rows),
+        slope_meas=sl_meas, slope_model=sl_mod,
+        slope_rel=sl_mod / sl_meas - 1.0,
+        tol=sl.get("tol", {}), guard=sl.get("guard", {}))
+
+
 def run_anchor(a: dict) -> dict:
     theta = np.asarray(a["theta"], dtype=float)
     rec = evaluate(theta, fidelity=Fidelity.L0, use_cache=False,
@@ -271,8 +334,38 @@ def _fmt_status(ok: bool) -> str:
     return "PASS" if ok else "FAIL"
 
 
+def _speedline_items(sp: dict) -> list[dict]:
+    """Las cinco métricas de una speedline, con su tolerancia y su guarda."""
+    tol, guard = sp["tol"], sp["guard"]
+    out = []
+    for key, val, txt, d_txt in (
+        ("pr_max_abs", sp["pr_max_abs"],
+         f"máx |ΔPR| en la línea", f"{100 * sp['pr_max_abs']:.2f}%"),
+        ("eta_max_abs", sp["eta_max_abs"],
+         f"máx |Δη| en la línea", f"{100 * sp['eta_max_abs']:.2f}p"),
+        ("pr_peak", abs(sp["pr_peak_model"] / sp["pr_peak_meas"] - 1.0),
+         f"{sp['pr_peak_model']:.3f}/{sp['pr_peak_meas']:.3f}",
+         f"{100 * (sp['pr_peak_model'] / sp['pr_peak_meas'] - 1):+.2f}%"),
+        ("eta_peak", abs(sp["eta_peak_model"] - sp["eta_peak_meas"]),
+         f"{sp['eta_peak_model']:.3f}/{sp['eta_peak_meas']:.3f}",
+         f"{100 * (sp['eta_peak_model'] - sp['eta_peak_meas']):+.2f}p"),
+        ("slope_rel", abs(sp["slope_rel"]),
+         f"{sp['slope_model']:+.4f}/{sp['slope_meas']:+.4f}",
+         f"{100 * sp['slope_rel']:+.1f}%"),
+    ):
+        t = tol.get(key, 0.05)
+        g = guard.get(key, t)
+        out.append(dict(key=key, val=val, txt=txt, d_txt=d_txt, tol=t,
+                        guard=g, ok=val < t, ok_guard=val < g))
+    # etiquetas legibles para las dos primeras
+    out[0]["txt"] = f"{100 * sp['pr_mean']:+.2f}% media"
+    out[1]["txt"] = "13 puntos"
+    return out
+
+
 def write_results_md(results: list[dict], anchors: list[dict],
-                     path: str, offd: list[dict] | None = None) -> None:
+                     path: str, offd: list[dict] | None = None,
+                     speed: list[dict] | None = None) -> None:
     lines = [
         "# Resultados de validación — Quasar Phy-AC",
         "",
@@ -324,6 +417,31 @@ def write_results_md(results: list[dict], anchors: list[dict],
             lines += ["", f"**{o['name']}** — fuente: {od['source']}", ""]
             if od.get("notes"):
                 lines += [od["notes"], ""]
+
+    # --- speedline completa (F-02) ----------------------------------------
+    if speed:
+        for sp in speed:
+            lines += [
+                "", f"### Speedline medida — {sp['name']}", "",
+                f"Fuente: {sp['speedline']['source']}", "",
+                "| Métrica | Modelo | Medido | Δ | Objetivo | |",
+                "|---|---|---|---|---|---|",
+            ]
+            for it in _speedline_items(sp):
+                lines.append(
+                    f"| `{it['key']}` | {it['txt']} | | {it['d_txt']} | "
+                    f"{it['tol']:.2f} | {_fmt_status(it['ok'])} |")
+            lines += ["", "Punto a punto:", "",
+                      "| ṁ [kg/s] | PR med | PR mod | ΔPR | η med | η mod "
+                      "| Δη [pts] | SM modelo | |",
+                      "|---|---|---|---|---|---|---|---|---|"]
+            for r in sp["rows"]:
+                lines.append(
+                    f"| {r['mdot']:.3f} | {r['PR_meas']:.3f} | "
+                    f"{r['PR_model']:.3f} | {r['dPR_rel']:+.2%} | "
+                    f"{r['eta_meas']:.3f} | {r['eta_model']:.3f} | "
+                    f"{100 * r['deta']:+.2f} | {r['min_SM']:+.3f} | "
+                    f"{r['tag']} |")
 
     lines += ["", "### Detalle por máquina", ""]
     for r in results:
@@ -380,6 +498,7 @@ def main(argv=None) -> int:
 
     results = [run_machine(m) for m in MACHINES]
     offd = [run_offdesign(o) for o in OFFDESIGN]
+    speed = [run_speedline(k) for k in SPEEDLINES]
     anchors = [run_anchor(a) for a in REGRESSION_ANCHORS]
 
     print(f"{'Máquina':26s} {'plano':8s} {'PR mod/med':>14s} {'ΔPR':>8s} "
@@ -409,16 +528,37 @@ def main(argv=None) -> int:
                          f"  (guarda ±{100 * it['guard']:.0f}%: "
                          f"{_fmt_status(it['ok_guard'])})"))
 
+    if speed:
+        print()
+        print(f"{'Speedline medida (F-02)':30s} {'métrica':14s} "
+              f"{'modelo/medido':>20s} {'Δ':>9s}  obj")
+        for sp in speed:
+            for it in _speedline_items(sp):
+                print(f"{sp['name'][:30]:30s} {it['key']:14s} "
+                      f"{it['txt']:>20s} {it['d_txt']:>9s}  "
+                      f"{_fmt_status(it['ok'])}"
+                      + ("" if it["ok"] else
+                         f"  (guarda {it['guard']:.2f}: "
+                         f"{_fmt_status(it['ok_guard'])})"))
+
     if not args.no_write:
         out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "RESULTS.md")
-        write_results_md(results, anchors, out)
+        write_results_md(results, anchors, out, offd, speed)
         print(f"\n→ {out}")
 
+    # Fuera de diseño y speedline: --strict usa la GUARDA interina, igual
+    # que η, para no dejar el CI rojo de forma permanente mientras la
+    # brecha esté documentada y abierta. El objetivo se reporta siempre.
     hard_fail = (any(not r["PR_pass"] or not r["eta_guard"] for r in results)
-                 or any(not a["ok"] for a in anchors))
+                 or any(not a["ok"] for a in anchors)
+                 or any(not it["ok_guard"] for o in offd
+                        for it in o["items"])
+                 or any(not it["ok_guard"] for sp in speed
+                        for it in _speedline_items(sp)))
     if hard_fail:
-        print("\nSTRICT: fallo duro (PR, guarda de η o ancla de regresión).")
+        print("\nSTRICT: fallo duro (PR, guarda de η / fuera de diseño / "
+              "speedline, o ancla de regresión).")
     return 1 if (args.strict and hard_fail) else 0
 
 

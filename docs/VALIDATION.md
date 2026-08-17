@@ -1,7 +1,7 @@
 # Phy-AC — Campaña de validación
 
 Distinción VV&UQ del proyecto: `test_phyac.py` VERIFICA (¿resolvemos bien
-las ecuaciones? — 171 checks); `validation/validate.py` VALIDA (¿las
+las ecuaciones? — 177 checks); `validation/validate.py` VALIDA (¿las
 ecuaciones correctas? — contra máquinas NASA medidas). CI corre ambos en
 estricto.
 
@@ -42,10 +42,34 @@ Primera calificación del MAPA contra medida. Fuente: AGARD AR-355
 ṁ/ṁ_choke = 0.925 [...] The experimental ṁ_choke as determined by NASA
 was 20.93 kg/s», Rotor 37 al 100% de velocidad equivalente de diseño.
 
+**Extremos del rango de gasto:**
+
 | Cantidad | Modelo | Medido | Δ | Objetivo | |
 |---|---|---|---|---|---|
 | ṁ_choke [kg/s] | 22.31 | 20.93 | **+6.6%** | ±5% | FAIL |
+| ṁ_stall [kg/s] | 20.18 | 19.36 | +4.2% | ±5% | PASS |
 | ṁ_stall/ṁ_choke | 0.904 | 0.925 | −2.2% | ±3% | PASS |
+
+**Característica completa, 13 puntos medidos:**
+
+| Métrica | Modelo | Medido | Δ | Objetivo | |
+|---|---|---|---|---|---|
+| máx \|ΔPR\| en la línea | media −1.11% | — | **2.12%** | ±5% | PASS |
+| máx \|Δη\| en la línea | — | — | **4.39 pts** | ±3 pts | FAIL |
+| PR de pico | 2.120 | 2.144 | −1.11% | ±5% | PASS |
+| η de pico | 0.862 | 0.891 | −2.89 pts | ±3 pts | PASS |
+| pendiente dPR/dṁ [1/(kg/s)] | −0.0896 | −0.0943 | −5.0% | ±20% | PASS |
+
+**Seis de ocho cantidades dentro del objetivo.** Las dos que fallan
+tienen diagnóstico, no misterio (abajo). La tabla punto a punto está en
+`validation/RESULTS.md`.
+
+El **η punto a punto** falla con un patrón muy limpio: el modelo va
+−4.4 pts en el extremo de CHOKE y converge a la medida cerca del bombeo
+(+0.3 pts en el último punto). Es decir, sobreestima la pérdida a
+incidencia NEGATIVA. Es exactamente lo que la ficha de F-02 predijo que
+habría que mirar primero — el bucket de incidencia
+(`_incidence_bucket`) y la ley de desviación fuera de diseño.
 
 **El criterio de BOMBEO queda calificado**: sitúa el stall a un 90.4% del
 choke frente al 92.5% medido. Ese era el número que más pesaba sin
@@ -109,12 +133,11 @@ supersónica, montarla ahora sería ajustar a una máquina. El código del
 intento no se conserva; lo que se conserva es esta medida, que es lo que
 ahorra el trabajo la próxima vez.
 
-Mientras tanto sigue vigente `MX_CHOKE = 0.78` con su +6.6% documentado.
-
-Mientras tanto `--strict` corre contra una guarda interina (±12% en
-choke, ±6% en el ratio), igual que la guarda de η: el CI no se queda rojo
-por una brecha documentada y abierta, pero el objetivo real (±5%) se
-reporta siempre.
+Mientras tanto sigue vigente `MX_CHOKE = 0.78` con su +6.6% documentado,
+y `--strict` corre contra guardas interinas declaradas (±12% en choke,
+±6% en el ratio, 6 pts en el η de la línea), igual que la guarda de η del
+punto de diseño: el CI no se queda rojo por una brecha documentada y
+abierta, pero el objetivo real se reporta siempre.
 
 #### Los 13 puntos ya están en el repo
 
@@ -127,9 +150,10 @@ VERBATIM del fichero. Se corroboraron además digitalizando por separado
 las Figuras 2.4 y 3.1/3.2 del AGARD: los dos caminos, independientes,
 coinciden dentro de 0.003 en PR y 0.001 en η.
 
-Con eso, calificar el **PR de pico** y la **PENDIENTE** de la speedline
-—las otras dos preguntas de F-02— ya no depende de conseguir datos, solo
-de escribir la comparación punto a punto.
+Con eso se calificaron el **PR de pico**, el **η de pico** y la
+**PENDIENTE** — las otras preguntas de F-02 (tabla arriba). La
+comparación vive en `validate.run_speedline` y su detalle punto a punto
+se regenera en `validation/RESULTS.md`.
 
 Un aviso que salió al buscarlos: **ṁ_choke = 20.93 kg/s es INFERIDO, no
 medido.** El AGARD lo presenta como «as determined by NASA», pero la
@@ -140,10 +164,26 @@ más ensayos de la etapa completa. La diferencia (0.14 %) es menor que
 cualquier tolerancia en juego, pero un dato y una inferencia no son lo
 mismo y conviene que esté escrito.
 
-**Lo que falta para cerrar F-02**: (a) las dos ramas del criterio de
-choke (arriba); (b) la comparación punto a punto contra los 13 valores,
-que ya están en el repo; (c) velocidad PARCIAL — todo lo anterior es al
-100 %, y ahí es donde viven los VSV y el sangrado.
+#### Estado de F-02
+
+**Cerrado al 100% de velocidad.** Ocho cantidades calificadas contra
+medida, seis dentro de objetivo. Lo que era «ninguna curva del mapa está
+calificada» ahora es una tabla con nombres, números y fuentes.
+
+Quedan dos brechas, las dos con diagnóstico:
+
+1. **El criterio de choke** (+6.6%) necesita las dos ramas — subsónica y
+   supersónica. Es G-09 + F-07 y arriba está medido por qué no sale con
+   una sola.
+2. **El η fuera de diseño** (−4.4 pts en choke, convergiendo a 0 en
+   bombeo) apunta al bucket de incidencia: el modelo cobra demasiada
+   pérdida a incidencia negativa. Es una ley, no una constante, y hay 13
+   puntos con los que ajustarla.
+
+Y falta **velocidad PARCIAL**: todo lo anterior es al 100%, y es a
+velocidad parcial donde viven los VSV y el sangrado — los dos mecanismos
+que la fase 9 añadió y que siguen sin contrastar. El paquete del TMR
+solo trae la línea del 100%.
 
 Tabla viva en `validation/RESULTS.md` (regenerar tras tocar
 `physics_core.py`).

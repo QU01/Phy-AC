@@ -1302,6 +1302,40 @@ check("el criterio de CHOKE sigue siendo optimista y no ha empeorado",
 check("todas las cantidades dentro de la guarda con la que corre --strict",
       all(it["ok_guard"] for r in _r22 for it in r["items"]))
 
+# --- la SPEEDLINE completa, punto a punto ---------------------------------
+from validation.machines import SPEEDLINES as _SL     # noqa: E402
+from validation.validate import (run_speedline as _rs,  # noqa: E402
+                                 _speedline_items as _si)
+
+check("hay una speedline medida con sus puntos y su fuente",
+      len(_SL) >= 1
+      and all(len(s["points"]) >= 5 and s.get("source") for s in
+              _SL.values()),
+      ", ".join(f"{k}: {len(v['points'])} pts" for k, v in _SL.items()))
+_sp22 = [_rs(k) for k in _SL]
+_it22 = {it["key"]: it for sp in _sp22 for it in _si(sp)}
+check("se califican las cinco métricas de la característica",
+      {"pr_max_abs", "eta_max_abs", "pr_peak", "eta_peak", "slope_rel"}
+      <= set(_it22))
+# Regresión sobre lo medido hoy: no se exige PASS (η punto a punto FALLA
+# el objetivo y está documentado), se exige que no empeore en silencio.
+check("el modelo sigue la característica en PR a lo largo de la línea",
+      _it22["pr_max_abs"]["val"] < 0.05,
+      f"máx |ΔPR| = {100 * _it22['pr_max_abs']['val']:.2f}% sobre "
+      f"{len(_sp22[0]['rows'])} puntos")
+check("y acierta la PENDIENTE, que es la que mueve el punto de operación",
+      _it22["slope_rel"]["val"] < 0.20,
+      f"dPR/dṁ modelo {_sp22[0]['slope_model']:+.4f} vs medida "
+      f"{_sp22[0]['slope_meas']:+.4f} /(kg/s) "
+      f"({100 * _sp22[0]['slope_rel']:+.1f}%)")
+check("el η punto a punto sigue fuera de objetivo y no ha empeorado",
+      0.02 < _it22["eta_max_abs"]["val"] < 0.06,
+      f"máx |Δη| = {100 * _it22['eta_max_abs']['val']:.2f} pts en el "
+      "extremo de choke (objetivo 3 pts) — brecha ABIERTA, "
+      "ver docs/VALIDATION.md")
+check("toda la speedline dentro de la guarda de --strict",
+      all(it["ok_guard"] for sp in _sp22 for it in _si(sp)))
+
 # ==========================================================================
 print(f"\n{_n_pass}/{_n_pass + _n_fail} checks OK"
       + (f" — {_n_fail} FALLOS" if _n_fail else ""))

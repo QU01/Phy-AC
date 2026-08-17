@@ -193,7 +193,7 @@ C# phase outputs: one STL per part plus the union views (binary, in mm).
 | `AxialCompressorDesigner.Example/` | 5c | Executable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | product | End-to-end CLI: spec → design → geometry → report → dataset [→ STLs via --stl/--voxel]. |
 | `contract_schema.py` | 5a | Published JSON Schema of `phyac-axial-2` + dependency-free validator (also a CLI: `python contract_schema.py <contract>`). |
-| `test_phyac.py` | VV&UQ | Verification suite: 171 checks (triangles, conservation, g continuity, profiles, contract schema, disc solver, optimizer core, L1 through-flow, radial equilibrium, assembly interference). |
+| `test_phyac.py` | VV&UQ | Verification suite: 177 checks (triangles, conservation, g continuity, profiles, contract schema, disc solver, optimizer core, L1 through-flow, radial equilibrium, assembly interference). |
 | `validation/` | VV&UQ | Validation campaign vs NASA Stage 35, Rotor 37/67 and GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## Python API (layers 1–5b)
@@ -294,7 +294,7 @@ Phy-AC/
 ├── report_generator.py                   layer 5b  self-contained HTML report
 ├── visualization.py                      layer 5b  matplotlib figures (optional)
 ├── phyac_cli.py                          end-to-end CLI (spec → design → report [→ STLs])
-├── test_phyac.py                         verification suite (171 checks)
+├── test_phyac.py                         verification suite (177 checks)
 │
 ├── schemas/                              published JSON Schema of the contract
 ├── validation/                           validation campaign (machines.py, validate.py)
@@ -382,7 +382,7 @@ independent voxel fields built in the same `Library.Go` session.
 ## Verification and Validation
 
 ```bash
-python test_phyac.py               # verification: 171 checks
+python test_phyac.py               # verification: 177 checks
 python validation/validate.py      # validation: NASA machines → RESULTS.md
 python data_pipeline.py            # data anchors: rebuild + SHA-256 verify
 python contract_schema.py runs/x/geometry/axial_compressor.json   # contract
@@ -469,7 +469,18 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
   surge point sits right. Fixing it needs a relative-Mach throat criterion
   (G-09/F-07) and a re-validation of all four machines, so it is not done
   in passing; `--strict` runs against a declared interim guard meanwhile.
-  Verification 165 → 171 checks.
+  The full characteristic followed: NASA publishes the 13 measured points
+  as a **table** (Turbulence Modeling Resource, `rotor 37 exp data.xlsx`),
+  and an independent digitisation of the AGARD figures agrees with it to
+  0.003 in PR and 0.001 in η. Point by point, the model tracks the
+  measured line to **2.1% max in PR** (−1.1% mean) and gets the **slope
+  within 5%** — the slope being what moves the operating point when back
+  pressure changes, and therefore what makes surge margin mean anything.
+  It misses on **η by 4.4 pts at the choke end**, converging to the
+  measurement near stall: it over-charges loss at negative incidence,
+  which points straight at the incidence bucket. **Six of eight
+  quantities inside target**, both misses diagnosed.
+  Verification 165 → 177 checks.
 
 - **2026-08-16 — L1 becomes a real rung: our own streamline-curvature
   through-flow (phase 11 · F-01/H2)**: `scm_core.py` replaces
@@ -503,7 +514,7 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
   difference into work, which changes the density, which changes the next
   station; over seven or eight stages it compounds to ±27% in PR. A
   declared `PR_WINDOW` (±15%) rejects those points instead of returning
-  the number. Verification 153 → 171 checks.
+  the number. Verification 153 → 177 checks.
 
 - **2026-08-16 — layer 5c matches the CadQuery route again (phase 10 ·
   G-01)**: the STL (manufacturing route) and the STEP (re-CAD route) had
