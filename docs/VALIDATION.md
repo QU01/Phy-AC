@@ -1,7 +1,7 @@
 # Phy-AC — Campaña de validación
 
 Distinción VV&UQ del proyecto: `test_phyac.py` VERIFICA (¿resolvemos bien
-las ecuaciones? — 163 checks); `validation/validate.py` VALIDA (¿las
+las ecuaciones? — 165 checks); `validation/validate.py` VALIDA (¿las
 ecuaciones correctas? — contra máquinas NASA medidas). CI corre ambos en
 estricto.
 
@@ -218,6 +218,30 @@ sobre 9 puntos) en n = −0.5, 0, +0.5. Y sobre el θ de referencia:
 La fila de vórtice libre es VERIFICACIÓN: es el caso donde las hipótesis
 del meanline son exactas, así que coincidir es el resultado esperado. La
 de torbellino controlado es el RESIDUAL que la capa 2 necesita.
+
+**Banco de pruebas** (`validation/bench_scm.py` → `BENCH_SCM.md`, 80
+diseños factibles por LHS sobre el espacio completo):
+
+| | vórtice libre | torbellino controlado (n = −0.5) |
+|---|---|---|
+| cobertura | 85% | 75% |
+| coste (mediana) | 3.8 s/máquina, ≈0.85 s por etapa | ídem |
+| ΔPR mediana vs L0 | −0.08% (p10–p90: −2.2% … +1.3%) | −1.50% (−6.7% … −0.1%) |
+| Δη mediana | +0.02 pts | −0.24 pts |
+| reparto de trabajo en el span | 6.1% | 6.8% |
+| convergencia | 15 iteraciones (p90 18) | ídem |
+| independencia de malla (5→13 líneas) | dispersión mediana 0.33%, máx 1.97% | ídem |
+
+**Hallazgo central del banco**: la cobertura CAE con el número de etapas
+(100% en 1 etapa, 71-75% en 6-8). La razón es estructural, no numérica —
+el annulus lo dimensiona L0 con su Cx uniforme y su densidad media, L1
+resuelve un perfil, y el álabe de ángulo fijo convierte esa diferencia en
+trabajo, que cambia la densidad, que cambia la siguiente estación. En 1-4
+etapas es ruido; en 7-8 se compone hasta ±27% de PR. La cura de fondo es
+que el annulus salga del MISMO solver que lo usa (o que L0 lo dimensione
+con el perfil de L1); mientras tanto la guarda `PR_WINDOW` (±15%) rechaza
+el punto y lo degrada a L0 etiquetado en vez de devolver un número que
+nadie debería usar.
 
 **Sigue SIN calificar contra medida.** L1 aporta variación de fidelidad y
 distribución radial; no exactitud demostrada. Es el mismo hueco que el

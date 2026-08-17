@@ -1200,6 +1200,22 @@ check("SCMDiverged es un error propio, no un None silencioso",
       and not _ok_call(lambda: sc1.solve(
           THETA_REF, _r_l0, n_streamlines=4)))
 
+# --- la guarda de DERIVA vs L0 --------------------------------------------
+# El annulus lo dimensiona L0 con su Cx uniforme; sobre muchas etapas la
+# diferencia con el perfil de L1 se compone a través del álabe de ángulo
+# fijo (medido hasta ±27% de PR en máquinas de 7-8 etapas, ver
+# validation/BENCH_SCM.md). Fuera de la ventana el punto se rechaza.
+_r_fake = json.loads(json.dumps({k: v for k, v in _r_l0.items()
+                                 if k not in ("frozen", "stage_table")}))
+_r_fake["frozen"] = _r_l0["frozen"]
+_r_fake["stage_table"] = _r_l0["stage_table"]
+_r_fake["PR"] = _r_l0["PR"] * 2.0        # L0 "dice" el doble
+check("una DERIVA grande respecto a L0 se rechaza, no se devuelve",
+      not _ok_call(lambda: sc1.solve(THETA_REF, _r_fake)),
+      f"ventana ±{100 * sc1.PR_WINDOW:.0f}%")
+check("y dentro de la ventana el mismo diseño SÍ resuelve",
+      _ok_call(lambda: sc1.solve(THETA_REF, _r_l0)))
+
 # ==========================================================================
 print("— T20 · paridad capa 5c (C#/PicoGK) ↔ via CadQuery (fase 10 · G-01)")
 # El STL es la ruta de fabricacion y el STEP la de re-CAD. Entre la fase

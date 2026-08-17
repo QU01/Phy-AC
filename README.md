@@ -193,7 +193,7 @@ C# phase outputs: one STL per part plus the union views (binary, in mm).
 | `AxialCompressorDesigner.Example/` | 5c | Executable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | product | End-to-end CLI: spec → design → geometry → report → dataset [→ STLs via --stl/--voxel]. |
 | `contract_schema.py` | 5a | Published JSON Schema of `phyac-axial-2` + dependency-free validator (also a CLI: `python contract_schema.py <contract>`). |
-| `test_phyac.py` | VV&UQ | Verification suite: 163 checks (triangles, conservation, g continuity, profiles, contract schema, disc solver, optimizer core, L1 through-flow, radial equilibrium, assembly interference). |
+| `test_phyac.py` | VV&UQ | Verification suite: 165 checks (triangles, conservation, g continuity, profiles, contract schema, disc solver, optimizer core, L1 through-flow, radial equilibrium, assembly interference). |
 | `validation/` | VV&UQ | Validation campaign vs NASA Stage 35, Rotor 37/67 and GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## Python API (layers 1–5b)
@@ -294,7 +294,7 @@ Phy-AC/
 ├── report_generator.py                   layer 5b  self-contained HTML report
 ├── visualization.py                      layer 5b  matplotlib figures (optional)
 ├── phyac_cli.py                          end-to-end CLI (spec → design → report [→ STLs])
-├── test_phyac.py                         verification suite (163 checks)
+├── test_phyac.py                         verification suite (165 checks)
 │
 ├── schemas/                              published JSON Schema of the contract
 ├── validation/                           validation campaign (machines.py, validate.py)
@@ -382,11 +382,12 @@ independent voxel fields built in the same `Library.Go` session.
 ## Verification and Validation
 
 ```bash
-python test_phyac.py               # verification: 163 checks
+python test_phyac.py               # verification: 165 checks
 python validation/validate.py      # validation: NASA machines → RESULTS.md
 python data_pipeline.py            # data anchors: rebuild + SHA-256 verify
 python contract_schema.py runs/x/geometry/axial_compressor.json   # contract
 python validation/parity_stl_step.py runs/x/geometry/axial_compressor.json 0.6   # STL vs STEP
+python validation/bench_scm.py     # L1 bench: coverage, cost, grid, residual
 ```
 
 With the optional extras installed, `PHYAC_REQUIRE_STEP=1` and
@@ -471,7 +472,18 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
   limiter is still holding at convergence, raises and the point degrades
   to L0 with the reason recorded. **The `l1` extra is gone** — the whole
   Python side is NumPy-only again, L1 included, and runs in-process at
-  ~3 s per machine. Verification 153 → 163 checks.
+  ~3 s per machine. A benchmark campaign
+  (`validation/bench_scm.py` → `validation/BENCH_SCM.md`, 80 LHS designs)
+  characterises it: **85% coverage** under free vortex, 3.8 s median per
+  machine (≈0.85 s per stage), 0.33% median spread between 5 and 13
+  streamlines, 15 median outer iterations. Its central finding is that
+  coverage FALLS with stage count (100% at one stage, 71–75% at six to
+  eight) for a structural reason — L0 sizes the annulus with its uniform
+  Cx, L1 resolves a profile, and the fixed-angle blade turns that
+  difference into work, which changes the density, which changes the next
+  station; over seven or eight stages it compounds to ±27% in PR. A
+  declared `PR_WINDOW` (±15%) rejects those points instead of returning
+  the number. Verification 153 → 165 checks.
 
 - **2026-08-16 — layer 5c matches the CadQuery route again (phase 10 ·
   G-01)**: the STL (manufacturing route) and the STEP (re-CAD route) had

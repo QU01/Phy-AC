@@ -106,6 +106,19 @@ CM_SPREAD_MAX = 2.40           # media. Es un limitador NUMÉRICO, no un
 #                                de devolver un campo amasado por el
 #                                limitador.
 BLADE_RELAX = 0.35             # relajación del cierre Cm↔Cu del álabe
+PR_WINDOW = 0.15               # |PR_L1/PR_L0 − 1| máximo admisible.
+#   NO es una afirmación de física: es la guarda contra un problema
+#   ESTRUCTURAL de acoplar los dos niveles. El annulus lo dimensiona L0
+#   con SU Cx uniforme y SU densidad media; L1 resuelve un perfil, así
+#   que su Cm medio no coincide exactamente, el álabe —de ángulo fijo—
+#   convierte esa diferencia en trabajo, el trabajo cambia la densidad y
+#   la siguiente estación arranca con más diferencia. En 1-4 etapas es
+#   ruido; en 7-8 el lazo se compone hasta ±27% de PR, y eso no es
+#   fidelidad, es deriva. Medido en validation/BENCH_SCM.md.
+#   La cura de fondo es que el annulus salga del MISMO solver que lo usa
+#   (o que L0 lo dimensione con el perfil de L1); mientras tanto, el
+#   punto se rechaza y se degrada a L0 etiquetado en vez de devolver un
+#   número que nadie debería usar.
 TIP_BAND_FRAC = 0.25           # fracción de span sobre la que se reparte
 #                                la pérdida de holgura de punta
 WALL_BAND_FRAC = 0.30          # ídem para la capa límite de pared
@@ -669,6 +682,14 @@ def solve(theta: np.ndarray, record: dict,
     dphi = pc.phi_air(T0_out) - pc.phi_air(T0_in)
     if not (np.isfinite(PR) and PR > 1.001 and dphi > 1e-6):
         raise SCMDiverged(f"salida no física (PR={PR}, dphi={dphi})")
+    pr_l0 = float(record.get("PR", 0.0) or 0.0)
+    if pr_l0 > 1.0 and abs(PR / pr_l0 - 1.0) > PR_WINDOW:
+        raise SCMDiverged(
+            f"DERIVA respecto a L0: PR {pr_l0:.3f} → {PR:.3f} "
+            f"({100 * (PR / pr_l0 - 1):+.1f}%, ventana "
+            f"±{100 * PR_WINDOW:.0f}%). El annulus lo dimensionó L0 con su "
+            f"Cx uniforme; sobre {len(record['stage_table'])} etapas la "
+            "diferencia se compone a través del álabe de ángulo fijo")
     eta_poly = float(np.clip(pc.RGAS * math.log(PR) / dphi, 0.05, 0.999))
 
     # eficiencia isentrópica exacta de gas imperfecto

@@ -198,7 +198,7 @@ Salidas de la fase C#: un STL por pieza más las vistas de unión
 | `AxialCompressorDesigner.Example/` | 5c | Ejecutable: CLI `axial_compressor.json → STLs`. |
 | `phyac_cli.py` | producto | CLI end-to-end: espec → diseño → geometría → informe → dataset [→ STLs vía --stl/--voxel]. |
 | `contract_schema.py` | 5a | JSON Schema publicado de `phyac-axial-2` + validador sin dependencias (también CLI: `python contract_schema.py <contrato>`). |
-| `test_phyac.py` | VV&UQ | Suite de verificación: 163 checks (triángulos, conservación, continuidad de g, perfiles, esquema del contrato, solver de disco, núcleo del optimizador, through-flow L1, equilibrio radial, interferencias del ensamble). |
+| `test_phyac.py` | VV&UQ | Suite de verificación: 165 checks (triángulos, conservación, continuidad de g, perfiles, esquema del contrato, solver de disco, núcleo del optimizador, through-flow L1, equilibrio radial, interferencias del ensamble). |
 | `validation/` | VV&UQ | Campaña de validación vs NASA Stage 35, Rotor 37/67 y GE/NASA E³ HPC → `RESULTS.md`. |
 
 ## API Python (capas 1–5b)
@@ -302,11 +302,12 @@ Licencias de terceros: ver [README.md](README.md#third-party-licenses).
 ## Verificación y validación
 
 ```bash
-python test_phyac.py               # verificación: 163 checks
+python test_phyac.py               # verificación: 165 checks
 python validation/validate.py      # validación: máquinas NASA → RESULTS.md
 python data_pipeline.py            # anclas de datos: rebuild + SHA-256
 python contract_schema.py runs/x/geometry/axial_compressor.json   # contrato
 python validation/parity_stl_step.py runs/x/geometry/axial_compressor.json 0.6   # STL vs STEP
+python validation/bench_scm.py     # banco de L1: cobertura, coste, malla, residual
 ```
 
 Con los extras instalados, `PHYAC_REQUIRE_STEP=1` y `PHYAC_REQUIRE_L1=1`
@@ -390,7 +391,19 @@ predicción de pérdidas → (η, PR). Tabla vigente en
   Cm que el limitador numérico sigue sujetando al converger, lanzan y el
   punto degrada a L0 con el motivo anotado. **El extra `l1` desaparece**
   — todo el lado Python vuelve a ser solo NumPy, L1 incluida, y corre en
-  proceso a ~3 s por máquina. Verificación 153 → 163 checks.
+  proceso a ~3 s por máquina. Un banco de pruebas
+  (`validation/bench_scm.py` → `validation/BENCH_SCM.md`, 80 diseños por
+  LHS) lo caracteriza: **85% de cobertura** con vórtice libre, 3.8 s de
+  mediana por máquina (≈0.85 s por etapa), 0.33% de dispersión mediana
+  entre 5 y 13 líneas de corriente, 15 iteraciones exteriores de mediana.
+  Su hallazgo central es que la cobertura CAE con el número de etapas
+  (100% en una, 71–75% en seis a ocho) por una razón estructural — L0
+  dimensiona el annulus con su Cx uniforme, L1 resuelve un perfil, y el
+  álabe de ángulo fijo convierte esa diferencia en trabajo, que cambia la
+  densidad, que cambia la siguiente estación; sobre siete u ocho etapas se
+  compone hasta ±27% de PR. Una ventana declarada `PR_WINDOW` (±15%)
+  rechaza esos puntos en vez de devolver el número. Verificación
+  153 → 165 checks.
 
 - **2026-08-16 — la capa 5c vuelve a describir la misma máquina que la
   vía CadQuery (fase 10 · G-01)**: el STL (ruta de fabricación) y el STEP
