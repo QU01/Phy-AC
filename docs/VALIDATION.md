@@ -190,10 +190,16 @@ Tabla viva en `validation/RESULTS.md` (regenerar tras tocar
 
 ## 3. Calibraciones ancladas
 
-- **K_SHOCK = 0.70**: el modelo de choque normal a M de entrada
-  sobreestima el choque oblicuo real del pasaje; calibrado contra Rotor
-  37/67 manteniendo Stage 35 en tolerancia. Documentado en
-  `physics_core.py`.
+- **K_SHOCK = 1.00 (solo L0)**: el choque normal al M de entrada,
+  promediado punta/media. Sobreestima el choque oblicuo real del pasaje, y
+  la Fig. 7 de Koch & Smith 1976 lo confirma: esa curva es la COTA
+  SUPERIOR de los coeficientes medidos en fans reales. **L1 ya no lo usa**
+  — desde la fase 12.3 corre el modelo de dos fuentes del paper (choque de
+  pasaje oblicuo al Mach representativo + romo del borde de ataque), que
+  necesita datos por línea de corriente que el meanline no tiene. L0 lo
+  conserva porque cambiarlo reabriría toda esta tabla, F-02 y el ancla
+  REF_AX4; `_row_losses` sin `ks` es bit a bit la de antes y hay un check
+  (T23) que lo comprueba.
 - Conversión arrastre→pérdida del endwall: ω̄ = C_D·σ·cos²β₁/cos³β_m
   (Dixon §3). El bug inicial (factor invertido) dominaba el error de η
   (−17 pts) — corregido y cubierto por las anclas de regresión.
@@ -348,6 +354,146 @@ El paso está añadiendo mucho más material del que declara, y ese material
 NO está en el STEP ni en el margen estructural. Por eso la comparación se
 hace con el filete apagado y por eso queda anotado aquí: pendiente de
 investigar.
+
+### Fase 12.3 (2026-08-17) — modelo de pérdidas de Koch & Smith en L1
+
+**Primero: hasta esta fase la campaña entera corría a L0 y nadie lo había
+notado.** `evaluate` engancha L1 detrás de `rec["feasible"]`, y las cuatro
+máquinas medidas salen INFACTIBLES contra el espacio de diseño del
+optimizador — son rotores de investigación empujados más allá de lo que el
+optimizador admite (el R37 viola cuatro restricciones). Así que
+`validate.py` pedía L1, la puerta lo saltaba en silencio, y devolvía L0
+con la misma etiqueta. El encabezado de `RESULTS.md` decía «meanline L0» y
+era literal: **el peldaño alto de la escalera no estaba calificado contra
+nada medido.** `run_machine` ahora llama al SCM directo, saltando esa
+puerta: la factibilidad es una restricción de DISEÑO, no un requisito para
+resolver el flujo de una máquina que existe y de la que hay medidas.
+
+Con eso medible, la primera medida fue que **L1 predecía PEOR que L0**:
+Stage 35 pasaba de +1.17% a +3.60% en PR y de +1.75 a +3.77 pts en η. La
+descomposición señaló un único término:
+
+| ω̄ del rotor 1 | perfil | secundaria | choque | total |
+|---|---|---|---|---|
+| Stage 35 · L0 | 0.0354 | 0.0155 | **0.0349** | 0.0859 |
+| Stage 35 · L1 (antes) | 0.0365 | 0.0157 | **0.0203** | 0.0724 |
+| Rotor 37 · L0 | 0.0430 | 0.0188 | **0.0618** | 0.1236 |
+| Rotor 37 · L1 (antes) | 0.0439 | 0.0191 | **0.0406** | 0.1036 |
+
+Perfil y secundaria coincidían al 3%; el choque caía 34-42%. La razón es
+estructural: L0 promedia `½[ω(M_punta) + ω(M_medio)]`, una receta de dos
+puntos que pesa la punta a propósito; L1 integra ω(M(r)) en el span
+completo y la mitad interior es subsónica. La integral honesta da menos —
+y eso destapa que el modelo de debajo, choque NORMAL al Mach de entrada,
+no es el modelo correcto.
+
+**Koch & Smith 1976 §"Shock Losses" y Fig. 7** dicen exactamente eso: la
+curva «Normal Shock at M₁» es la cota superior, no el modelo. El suyo
+tiene dos fuentes, y ahora las dos están en L1:
+
+1. **Choque de PASAJE.** «the entropy rise of one oblique shock that
+   reduces a representative passage inlet Mach number to unity» —
+   OBLICUO, y a M = 1 (o al Mach de salida si la fila sale supersónica). Y
+   el Mach representativo no es el de entrada: es la media pesada del pico
+   de succión (Apéndice 1, ecs. 31/32, con las cuatro constantes ajustadas
+   por los autores sobre 34 cascadas) con el de entrada, «weights the Mach
+   number deduced from equations (31) and (32) six times as heavily as the
+   upstream Mach number». Los dos efectos se oponen: el pico de succión
+   SUBE el Mach que ve el choque, y que sea oblicuo en vez de normal BAJA
+   mucho la pérdida.
+
+2. **Romo del borde de ataque** (ec. 1, de D. C. Prince). Una fuente que
+   este modelo simplemente no tenía. El paper la considera sustancial a
+   Mach alto y dice que predice unos dos tercios de la pérdida de
+   rendimiento medida en las dos configuraciones con las que la contrastan.
+
+Y dos correctores más del mismo paper, sobre la pérdida de PERFIL:
+
+3. **Adder de θ/c = 0.0025** (§Comparisons With Compressor Test Data):
+   «This adjustment reduces the calculated efficiency by about 1.0 to 1.5
+   points». Es el mismo hueco que este modelo tapaba con
+   `K_PROFILE = 1.24`, pero MULTIPLICATIVO: los dos coinciden cerca de
+   Deq ≈ 1.8 y se separan mucho a difusión baja, que es justo donde vive
+   la punta de un rotor transónico. El paper insiste en que el adder va
+   solo en el perfil, nunca en la pared.
+
+4. **Contracción del tubo de corriente** sobre θ/c (Fig. 4a). En un
+   meanline hay que estimarla del annulus; aquí la altura del tubo es la
+   separación entre líneas vecinas y sale exacta.
+
+Además, la **secundaria de Howell** se redistribuye a las bandas de pared.
+Koch & Smith suman perfil y choque sección a sección y tratan el end-wall
+aparte, a nivel de etapa, porque el vórtice de pasaje es un fenómeno de
+pared; untarlo plano en el span contradecía la razón de existir del
+módulo. La media se conserva: cambia el PERFIL de la pérdida, no su nivel,
+y ese perfil entra en el equilibrio radial por el término T·∂s/∂r.
+
+**Lo que solo se puede hacer con el span resuelto.** Las cuatro piezas
+necesitan, por línea de corriente, la solidez local, el espesor de la
+sección, la contracción de SU tubo y el espaciado tangencial a ESE radio.
+El meanline tiene el triángulo medio y el annulus, y nada más. El espesor
+sale de la ley de la capa 5a (`TC_ROOT_R`/`TC_TIP_R`), o sea del álabe que
+realmente se fabrica y sale en el STEP.
+
+#### Resultado, en el plano donde cada máquina está medida
+
+| Máquina | plano | nivel | ΔPR | Δη [pts] |
+|---|---|---|---|---|
+| NASA Stage 35 | salida de máquina | L0 | +1.17% | +1.75 |
+| | | **L1** | **+0.97%** | +2.09 |
+| NASA Rotor 37 | rotor aislado | L0 | −1.20% | −1.57 |
+| | | **L1** | **−0.04%** | **+0.37** |
+| NASA Rotor 67 | rotor aislado | L1 | — annulus bloqueado | |
+| GE/NASA E³ | salida de máquina | L1 | — annulus bloqueado | |
+
+El Rotor 37 mejora en las dos cantidades y por mucho: el error de PR baja
+de −1.20% a −0.04% y el de η de −1.57 pts a +0.37. Es la máquina donde el
+modelo nuevo tiene más que decir, porque es la más transónica de las
+cuatro (M_rel de punta 1.49). El Stage 35 mejora en PR y empeora 0.34 pts
+en η. **Dos de cuatro máquinas, y en la de más contenido físico L1 gana
+claramente.**
+
+Ese plano de ROTOR es nuevo: el SCM solo emitía la salida de máquina, así
+que el R37 y el R67 —medidos como rotor aislado, sin estátor detrás— no se
+podían calificar a L1 aunque el solver resolviera. Emitirlo es lo que
+convierte esas dos máquinas en anclajes.
+
+#### Efecto en el banco de pruebas (A/B, mismo muestreo: n=80, semilla 71)
+
+| | choque normal (12.2) | Koch & Smith (12.3) |
+|---|---|---|
+| cobertura, vórtice libre | 85% | 78% |
+| cobertura, n=−0.5 | 75% | 70% |
+| coste mediana | 3.76 s | 4.33 s |
+| dispersión de malla (mediana) | 0.33% | **0.89%** |
+| residual ΔPR mediana, vórtice libre | −0.08% | **−0.75%** |
+| residual ΔPR mediana, n=−0.5 | −1.50% | **−2.30%** |
+
+Dos movimientos deliberados y uno a vigilar. El **residual L1−L0 creció** —
+eso es el producto: antes las dos capas compartían el modelo de pérdidas y
+el residual era casi puro equilibrio radial; ahora lleva física que L0 no
+tiene, que es lo que la capa 2 necesita aprender. La **dispersión de
+malla** subió de 0.45% a 1.07%: el choque y el romo del BA son función
+fuerte del radio en la punta, y refinar la malla resuelve mejor ese pico
+(convergencia monótona, no ruido). Es el precio declarado de calcular la
+pérdida donde ocurre; los umbrales de T21 lo recogen (±3% free-vortex,
+2% de malla). La **cobertura** bajó 5-7 pts — pérdidas mayores en la
+punta empujan a más diseños contra el limitador de perfil.
+
+#### Lo que sigue abierto
+
+- **Dos de cuatro máquinas no resuelven.** El R67 y el E³ mueren en
+  «estación BLOQUEADA: ni en el límite sónico pasa el gasto». Es el
+  acoplamiento L0↔L1 que el banco de pruebas ya había medido (el annulus
+  lo dimensiona L0 con Cx uniforme y L1 resuelve un perfil), agravado aquí
+  porque el annulus viene de θ invertido desde la medida. La cura de fondo
+  es que el annulus salga del mismo solver que lo usa.
+- **El η del Stage 35 empeora 0.34 pts.** Un solo punto y en la máquina
+  menos transónica; no basta para tocar nada, pero queda anotado.
+- **L0 sigue con el choque normal de dos puntos.** Cambiarlo reabriría la
+  campaña entera (cuatro máquinas + F-02 + el ancla REF_AX4), así que el
+  modelo nuevo vive donde puede alimentarse de verdad. `_row_losses` sin
+  `ks` es bit a bit la de antes y hay un check que lo comprueba.
 
 ### Fase 11 (2026-08-16) — L1 pasa a ser un peldaño de verdad
 

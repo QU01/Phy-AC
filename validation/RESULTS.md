@@ -13,6 +13,17 @@ Metodología: el θ de cada máquina reproduce su annulus (r_tip vía φ1) y su 
 | NASA Rotor 67 | rotor aislado (t-t) | 1.610 | 1.630 | -1.20% | 0.905 (eta_isen) | 0.930 | -2.5 | PASS | PASS |
 | GE/NASA E3 HPC (10 etapas) | máquina multietapa (t-t) | 21.717 | 23.000 | -5.58% | 0.884 (eta_poly) | 0.900 | -1.6 | PASS | PASS |
 
+## Las mismas máquinas a fidelidad L1 (SCM)
+
+Desde la fase 12.3 la campaña también califica L1 contra medida, llamando al SCM DIRECTO (la puerta de factibilidad de `evaluate` es una restricción de diseño, no un requisito para resolver una máquina que existe). Para los rotores aislados se compara el plano `scm["rotor1"]`, que es donde están medidos. El modelo de pérdidas de L1 es el de Koch & Smith 1976 por sección (docs/VALIDATION.md, fase 12.3).
+
+| Máquina | PR modelo | ΔPR | η modelo | Δη [pts] | vs L0 |
+|---|---|---|---|---|---|
+| NASA Stage 35 | 1.838 | +0.97% | 0.849 | +2.1 | PR mejor, η peor |
+| NASA Rotor 37 | 2.105 | -0.04% | 0.881 | +0.4 | PR mejor, η mejor |
+| NASA Rotor 67 | — | — | — | — | no resuelve: SCMDiverged: estación BLOQUEADA: ni en el límite sónico pasa el gasto (18.366 < 33.250 kg/s) |
+| GE/NASA E3 HPC (10 etapas) | — | — | — | — | no resuelve: SCMDiverged: estación BLOQUEADA: ni en el límite sónico pasa el gasto (30.049 < 54.400 kg/s) |
+
 ## Fuera de diseño (F-02)
 
 Primera calificación del MAPA contra medida. Hasta la fase 12 la campaña solo calificaba el punto de diseño, y sin embargo el margen de bombeo es desde la fase 9 la restricción DURA que más recorta el espacio de diseño.

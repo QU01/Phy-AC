@@ -546,11 +546,16 @@ def solve(theta: np.ndarray, record: dict,
                     T0_in, P0_in)
                 a_le = np.sqrt(pc.GAMMA * pc.RGAS
                                * np.maximum(TS[k_le], 1.0))
+                a_te = np.sqrt(pc.GAMMA * pc.RGAS
+                               * np.maximum(TS[k_te], 1.0))
                 ds_rot = _row_loss_span(
                     b1, np.abs(b2m), w1, w2, w1 / a_le,
                     row["sigma_r"] * row["r_m"] / np.maximum(r_le, 1e-6),
                     row["h_blade"] / max(row["c_r"], 1e-4), rho_le,
-                    row["c_r"], p_le, TS[k_le], h0_te)
+                    row["c_r"], p_le, TS[k_le], h0_te,
+                    r_le, w2 / a_te, _streamtube_ratios(r_le, r_te),
+                    int(record["stage_table"][i]["n_blades_rotor"]),
+                    "rotor")
                 t0_te = _T_from_h_v(h0_te, np.full(n_sl, T0_in + 100.0))
                 ds_rot = ds_rot + _tip_clearance_span(
                     r_te, h0_te - H0[k_le], row["h_blade"], t0_te)
@@ -590,11 +595,16 @@ def solve(theta: np.ndarray, record: dict,
                     H0[k_te], c2v ** 2, DS[k_te], T0_in, P0_in)
                 a_te = np.sqrt(pc.GAMMA * pc.RGAS
                                * np.maximum(TS[k_te], 1.0))
+                a_se = np.sqrt(pc.GAMMA * pc.RGAS
+                               * np.maximum(TS[k_se], 1.0))
                 ds_sta = _row_loss_span(
                     np.abs(a2v), np.abs(a_out), c2v, c3v, c2v / a_te,
                     row["sigma_s"] * row["r_m"] / np.maximum(r_te, 1e-6),
                     row["h_blade"] / max(row["c_s"], 1e-4), rho_te,
-                    row["c_s"], p_te, TS[k_te], H0[k_te])
+                    row["c_s"], p_te, TS[k_te], H0[k_te],
+                    r_te, c3v / a_se, _streamtube_ratios(r_te, r_se),
+                    int(record["stage_table"][i]["n_blades_stator"]),
+                    "stator")
                 ds_new = DS[k_te] + ds_sta + _endwall_span(
                     r_se, record["stage_table"][i],
                     H0[k_te] - H0[k_le], t0_te)
@@ -665,18 +675,53 @@ def solve(theta: np.ndarray, record: dict,
         mdot, stations[k]["kb"], T0_in, P0_in, float(np.mean(CM[k])))
 
     # ---- promediado por gasto a la salida --------------------------------
-    r, cm, cu = R[k], CM[k], CU[k]
-    c2v = cm ** 2 + cu ** 2
-    T, p, rho = _static_state(H0[k], c2v, DS[k], T0_in, P0_in)
-    P0_sl = _total_pressure(T, p, H0[k])
-    w = rho * cm * COSG[k] * 2.0 * math.pi * r * stations[k]["kb"]
     trapz = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
-    m_tot = float(trapz(w, r))
-    if m_tot <= 0:
-        raise SCMDiverged("gasto de salida nulo")
-    P0_out = float(trapz(w * P0_sl, r)) / m_tot
-    h0_out = float(trapz(w * H0[k], r)) / m_tot
+
+    def _plane(q: int) -> tuple[float, float]:
+        """(P₀, h₀) promediados por GASTO en la estación q."""
+        rq, cmq, cuq = R[q], CM[q], CU[q]
+        Tq, pq, rhoq = _static_state(H0[q], cmq ** 2 + cuq ** 2, DS[q],
+                                     T0_in, P0_in)
+        wq = (rhoq * cmq * COSG[q] * 2.0 * math.pi * rq
+              * stations[q]["kb"])
+        mq = float(trapz(wq, rq))
+        if mq <= 0:
+            raise SCMDiverged("gasto nulo en el promediado")
+        return (float(trapz(wq * _total_pressure(Tq, pq, H0[q]), rq)) / mq,
+                float(trapz(wq * H0[q], rq)) / mq)
+
+    r, cm, cu = R[k], CM[k], CU[k]
+    _T_ex, _p_ex, _ = _static_state(H0[k], cm ** 2 + cu ** 2, DS[k],
+                                    T0_in, P0_in)
+    P0_sl = _total_pressure(_T_ex, _p_ex, H0[k])
+    P0_out, h0_out = _plane(k)
     T0_out = pc.T_from_h(h0_out, T0_in + 100.0)
+
+    # Plano de SALIDA DEL ROTOR de la etapa 1 (estación 1). El Rotor 37 y
+    # el 67 están medidos ahí —rotor aislado, sin estátor detrás— y sin
+    # emitir este plano no se pueden calificar contra L1 aunque el solver
+    # resuelva: lo único que salía era la salida de máquina, que es otro
+    # plano. Emitirlo es lo que convierte esas dos máquinas en anclajes.
+    rotor1: dict = {}
+    if n_stat > 1:
+        try:
+            P0_r1, h0_r1 = _plane(1)
+            T0_r1 = pc.T_from_h(h0_r1, T0_in + 100.0)
+            pr_r1 = P0_r1 / P0_in
+            dphi_r1 = pc.phi_air(T0_r1) - pc.phi_air(T0_in)
+            if pr_r1 > 1.001 and dphi_r1 > 1e-6:
+                T_id = pc.T_from_phi(
+                    pc.phi_air(T0_in) + pc.RGAS * math.log(pr_r1), T0_r1)
+                rotor1 = dict(
+                    PR=float(pr_r1),
+                    T0_out=float(T0_r1),
+                    eta_poly=float(np.clip(
+                        pc.RGAS * math.log(pr_r1) / dphi_r1, 0.05, 0.999)),
+                    eta_isen=float(np.clip(
+                        (pc.h_air(T_id) - h0_in)
+                        / max(h0_r1 - h0_in, 1e-6), 0.05, 0.999)))
+        except SCMDiverged:
+            rotor1 = {}
 
     PR = P0_out / P0_in
     dphi = pc.phi_air(T0_out) - pc.phi_air(T0_in)
@@ -703,6 +748,7 @@ def solve(theta: np.ndarray, record: dict,
         PR=float(PR), eta_poly=eta_poly, eta_isen=eta_isen,
         T0_out=float(T0_out), source="scm_L1",
         scm=dict(
+            rotor1=rotor1,
             n_streamlines=n_sl, n_stations=n_stat, iterations=it + 1,
             residual=move,
             span_frac=span.tolist(),
@@ -727,28 +773,119 @@ def solve(theta: np.ndarray, record: dict,
 # ---------------------------------------------------------------------------
 # Pérdidas resueltas en el span
 # ---------------------------------------------------------------------------
+def _blade_thickness_law(kind: str) -> tuple[float, float, float, float]:
+    """(t/c en cubo, t/c en punta, taper de cuerda, semi-espesor del BA).
+
+    Se leen de la capa 5a: es la ley de espesor del álabe que REALMENTE se
+    fabrica, no una constante paralela. Que L1 pague la pérdida de choque
+    con el espesor de la sección que sale en el STEP es la mitad de la
+    razón de tener un nivel L1.
+    """
+    import geometry_generator as gg          # diferido: 5a importa 1
+    tc = ((gg.TC_ROOT_R, gg.TC_TIP_R) if kind == "rotor"
+          else (gg.TC_ROOT_S, gg.TC_TIP_S))
+    # El generador DCA de blade_profiles acota el semi-espesor a 0.02·t/c
+    # en el borde: ese es el t_LE del perfil biconvexo que se voxeliza.
+    return tc[0], tc[1], gg.CHORD_TAPER, 0.02
+
+
+def _streamtube_ratios(r1: np.ndarray,
+                       r2: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(A₂/A₁, h₁/h₂) del TUBO DE CORRIENTE de cada línea en la fila.
+
+    Koch & Smith corrigen tanto el pico de succión (ec. 21-22) como el
+    espesor de momento (Fig. 4a) por la contracción del tubo, con una
+    relación de alturas que en un meanline hay que estimar del annulus.
+    Aquí es exacta: la altura del tubo es la separación entre líneas
+    vecinas, y el área va con r·h porque el tubo es un anillo.
+    """
+    def h(r: np.ndarray) -> np.ndarray:
+        d = np.empty(len(r))
+        d[1:-1] = 0.5 * (r[2:] - r[:-2])
+        d[0] = r[1] - r[0]
+        d[-1] = r[-1] - r[-2]
+        return np.maximum(np.abs(d), 1e-6)
+    h1, h2 = h(r1), h(r2)
+    a1 = np.maximum(r1, 1e-6) * h1
+    a2 = np.maximum(r2, 1e-6) * h2
+    return (np.clip(a2 / np.maximum(a1, 1e-12), 0.4, 2.0),
+            np.clip(h1 / np.maximum(h2, 1e-12), 0.6, 2.0))
+
+
+def _wall_band_weight(r: np.ndarray, frac: float) -> np.ndarray:
+    """Peso que concentra una pérdida en las bandas de CUBO y PUNTA.
+
+    Normalizado a media 1: redistribuye sin cambiar el total, así que
+    mueve el PERFIL radial de la pérdida sin tocar su nivel.
+    """
+    span = (r - r[0]) / max(r[-1] - r[0], 1e-9)
+    w = np.maximum(np.clip((frac - span) / frac, 0.0, 1.0),
+                   np.clip((span - (1.0 - frac)) / frac, 0.0, 1.0))
+    s = float(np.sum(w))
+    if s <= 0:
+        return np.ones(len(r))
+    return w * len(r) / s
+
+
 def _row_loss_span(b1: np.ndarray, b2: np.ndarray, w1: np.ndarray,
                    w2: np.ndarray, m1: np.ndarray, sigma: np.ndarray,
                    h_over_c: float, rho1: np.ndarray, chord: float,
                    p1: np.ndarray, T1: np.ndarray,
-                   h0_out: np.ndarray) -> np.ndarray:
+                   h0_out: np.ndarray, r1: np.ndarray, m2: np.ndarray,
+                   ratios: tuple[np.ndarray, np.ndarray], n_blades: int,
+                   kind: str) -> np.ndarray:
     """Δs de una fila, línea de corriente a línea de corriente.
 
     Es la ganancia real de resolver el span: el meanline calcula UNA
     pérdida con el triángulo medio y la reparte por igual. Aquí cada línea
-    paga su propia difusión, su propio Reynolds y su propio Mach — y el
-    choque solo lo pagan las líneas donde el Mach relativo lo justifica,
-    que es la mitad exterior de un rotor transónico.
+    paga su propia difusión, su propio Reynolds y su propio Mach.
+
+    El CHOQUE va por el modelo de Koch & Smith 1976 (physics_core §1b), y
+    esto es lo que solo se puede hacer con el span resuelto: el Mach
+    representativo del choque de pasaje sale del pico de succión de ESA
+    sección, que depende de su solidez, su espesor, su ángulo y la
+    contracción de SU tubo de corriente — cuatro cosas que en el meanline
+    solo existen en la línea media. Y el romo del borde de ataque paga
+    contra el espaciado tangencial local, que va con el radio.
+
+    La SECUNDARIA de Howell se redistribuye a las bandas de pared. Koch &
+    Smith suman perfil y choque sección a sección y tratan el end-wall
+    aparte, a nivel de etapa, porque el vórtice de pasaje es un fenómeno
+    de pared: untarlo plano en el span —como hacía esto— contradice la
+    razón de existir del módulo. La media se conserva, así que cambia el
+    PERFIL de la pérdida, no su nivel; y ese perfil entra en el equilibrio
+    radial por el término T·∂s/∂r.
     """
     n = len(b1)
-    ds = np.empty(n)
+    area_ratio, h_ratio = ratios
+    tc_hub, tc_tip, taper, le_frac = _blade_thickness_law(kind)
+    span = (r1 - r1[0]) / max(r1[-1] - r1[0], 1e-9)
+    om_pp = np.empty(n)     # perfil + choque, se quedan donde ocurren
+    om_sec = np.empty(n)    # secundaria, se redistribuye a las paredes
+    ds_le = np.empty(n)
     for j in range(n):
         re_c = float(rho1[j] * w1[j] * chord / pc.MU_AIR)
-        om, _, _ = pc._row_losses(
+        t_c = tc_hub + (tc_tip - tc_hub) * float(span[j])
+        c_loc = chord * (1.0 + (taper - 1.0) * float(span[j]))
+        b_tan = 2.0 * math.pi * float(r1[j]) / max(n_blades, 1)
+        _, _, det = pc._row_losses(
             float(abs(b1[j])), float(abs(b2[j])), float(w1[j]),
             float(w2[j]), float(max(sigma[j], 0.2)), h_over_c,
             float(m1[j]), float(m1[j]), re_c=re_c,
-            gam=pc.gamma_air(float(T1[j])))
+            gam=pc.gamma_air(float(T1[j])),
+            ks=dict(M2=float(m2[j]), tmax_c=t_c,
+                    area_ratio=float(area_ratio[j]), T1=float(T1[j]),
+                    h1_over_h2=float(h_ratio[j]),
+                    t_le_over_b=2.0 * le_frac * t_c * c_loc
+                    / max(b_tan, 1e-6)))
+        om_pp[j] = det["profile"] + det["shock"]
+        om_sec[j] = det["endwall"]
+        ds_le[j] = det["ds_le"]
+    om = om_pp + float(np.mean(om_sec)) * _wall_band_weight(
+        r1, WALL_BAND_FRAC)
+
+    ds = np.empty(n)
+    for j in range(n):
         # ω̄ referida a la cabeza dinámica COMPRESIBLE (P₀−p), igual que el
         # meanline desde la fase 9
         kx = pc.gamma_air(float(T1[j])) / (pc.gamma_air(float(T1[j])) - 1.0)
@@ -756,8 +893,8 @@ def _row_loss_span(b1: np.ndarray, b2: np.ndarray, w1: np.ndarray,
             2.0 * pc.cp_air(float(T1[j])))
         P01 = float(p1[j]) * (T01 / max(float(T1[j]), 1.0)) ** kx
         q1 = max(P01 - float(p1[j]), 1e-3)
-        P02 = max(P01 - om * q1, 0.05 * P01)
-        ds[j] = pc.RGAS * math.log(P01 / P02)
+        P02 = max(P01 - om[j] * q1, 0.05 * P01)
+        ds[j] = pc.RGAS * math.log(P01 / P02) + ds_le[j]
     return ds
 
 
@@ -793,12 +930,6 @@ def _endwall_span(r: np.ndarray, stage: dict, dh0: np.ndarray,
     if a_ew <= 0.0:
         return np.zeros(len(r))
     f_ew = (1.0 - a_ew) / max(1.0 - pc.NU_OVER_DELTA * a_ew, 1e-3)
-    span = (r - r[0]) / max(r[-1] - r[0], 1e-9)
-    w = np.maximum(
-        np.clip((WALL_BAND_FRAC - span) / WALL_BAND_FRAC, 0.0, 1.0),
-        np.clip((span - (1.0 - WALL_BAND_FRAC)) / WALL_BAND_FRAC, 0.0, 1.0))
-    if float(np.sum(w)) <= 0:
-        return np.zeros(len(r))
-    w = w * len(r) / float(np.sum(w))
+    w = _wall_band_weight(r, WALL_BAND_FRAC)
     dh = np.maximum(dh0, 0.0) * max(1.0 - f_ew, 0.0) * w
     return dh / np.maximum(t0, 1.0)

@@ -1145,16 +1145,24 @@ check("las líneas de corriente son monótonas y viven dentro de la vena",
               and abs(_sl[k][-1] - _scm["r_tip_mm"][k] / 1000.0) < 1e-9
               for k in range(len(_sl))))
 
-# --- el vórtice libre DEBE reproducir el meanline -------------------------
-# Es la condición en la que las hipótesis del meanline son exactas (Cx
-# radialmente constante, trabajo uniforme): si ahí las dos capas no
-# coinciden, la diferencia no es fidelidad, es un error.
-check("con vórtice libre L1 reproduce el meanline (±1% PR, ±1 pt η)",
-      abs(_r_l1["PR"] / _r_l0["PR"] - 1.0) < 0.01
-      and abs(_r_l1["eta_poly"] - _r_l0["eta_poly"]) < 0.01,
+# --- el vórtice libre DEBE quedarse cerca del meanline --------------------
+# Es la condición en la que las hipótesis CINEMÁTICAS del meanline son
+# exactas (Cx radialmente constante, trabajo uniforme). Hasta la fase 12.2
+# la exigencia era ±1%, porque las dos capas compartían además el MISMO
+# modelo de pérdidas y el residuo era puro equilibrio radial (−0.13%).
+# Desde la 12.3 las pérdidas de L1 son las de Koch & Smith por sección
+# —choque de pasaje oblicuo, romo del BA, adder de θ/c, contracción del
+# tubo— y son OTRAS a propósito: el residuo free-vortex lleva ΔPérdidas
+# legítimo además del equilibrio. La verificación cinemática pura sigue
+# siendo el check del ODE contra vortex_cx (arriba, 2e-16); aquí se acota
+# que el conjunto no derive.
+check("con vórtice libre L1 se queda cerca del meanline (±3% PR, ±2 pt η)",
+      abs(_r_l1["PR"] / _r_l0["PR"] - 1.0) < 0.03
+      and abs(_r_l1["eta_poly"] - _r_l0["eta_poly"]) < 0.02,
       f"PR {_r_l0['PR']:.4f} → {_r_l1['PR']:.4f} "
       f"({100 * (_r_l1['PR'] / _r_l0['PR'] - 1):+.2f}%), "
-      f"η {_r_l0['eta_poly']:.4f} → {_r_l1['eta_poly']:.4f}")
+      f"η {_r_l0['eta_poly']:.4f} → {_r_l1['eta_poly']:.4f} — el ΔPR es "
+      "el residual del modelo de pérdidas 12.3, no deriva del solver")
 
 # --- y con torbellino controlado NO debe reproducirlo ---------------------
 # Ahí la forma cerrada del meanline es una aproximación y el trabajo deja
@@ -1176,8 +1184,15 @@ check("con torbellino controlado (n=−0.5) L1 SÍ se separa de L0",
 _pr_sl = {}
 for _n_sl in (7, 11):
     _pr_sl[_n_sl] = sc1.solve(THETA_REF, _r_l0, n_streamlines=_n_sl)["PR"]
-check("el resultado no depende del nº de líneas (7 vs 11, <0.5%)",
-      abs(_pr_sl[7] / _pr_sl[11] - 1.0) < 0.005,
+# Hasta la 12.2 el umbral era 0.5%: las pérdidas eran las mismas en todas
+# las líneas salvo el Mach, y refinar la malla apenas movía nada. Con el
+# modelo por sección de la 12.3 el choque y el romo del BA son función
+# FUERTE del radio en la banda de punta: más líneas resuelven mejor ese
+# pico y el PR converge monótonamente hacia abajo (banco: dispersión de
+# malla 0.45% → 1.07% mediana). Es convergencia más lenta, no ruido — y
+# el precio declarado de calcular la pérdida donde ocurre.
+check("el resultado no depende del nº de líneas (7 vs 11, <2%)",
+      abs(_pr_sl[7] / _pr_sl[11] - 1.0) < 0.02,
       f"PR 7 líneas {_pr_sl[7]:.4f} vs 11 líneas {_pr_sl[11]:.4f}")
 check("menos de 5 líneas se RECHAZA (la derivada radial no tendría sentido)",
       not _ok_call(lambda: sc1.solve(THETA_REF, _r_l0, n_streamlines=3)))
@@ -1335,6 +1350,107 @@ check("el η punto a punto sigue fuera de objetivo y no ha empeorado",
       "ver docs/VALIDATION.md")
 check("toda la speedline dentro de la guarda de --strict",
       all(it["ok_guard"] for sp in _sp22 for it in _si(sp)))
+
+# ==========================================================================
+print("— T23 · modelo de pérdidas de Koch & Smith 1976 en L1 (fase 12.3)")
+
+# --- las dos curvas de referencia de la Fig. 7 ---------------------------
+# La de choque NORMAL es la comprobación fuerte: no tiene ambigüedad de
+# lectura y fija a la vez la relación de choque y la normalización por la
+# cabeza dinámica compresible.
+_fig7 = {1.2: 0.012, 1.4: 0.061, 1.6: 0.137, 1.8: 0.227}
+check("la curva «Normal Shock at M₁» de la Fig. 7 sale del modelo",
+      all(abs(pc._shock_omega(m) - v) < 0.004 for m, v in _fig7.items()),
+      ", ".join(f"M {m}: {pc._shock_omega(m):.3f}" for m in _fig7))
+_obl = {m: (1 - pc._oblique_shock_p0_ratio(m, 1.0)[0])
+        / (1 - (1 + 0.5 * (pc.GAMMA - 1) * m * m)
+           ** (-pc.GAMMA / (pc.GAMMA - 1))) for m in _fig7}
+check("el choque OBLICUO a sónico pierde mucho menos que el normal",
+      all(_obl[m] < 0.6 * pc._shock_omega(m) for m in _fig7),
+      "es la diferencia entre la cota superior y el modelo: "
+      + ", ".join(f"M {m}: {_obl[m]:.3f} vs {pc._shock_omega(m):.3f}"
+                  for m in _fig7))
+check("y el oblicuo crece monótono con M₁, sin saltos de rama",
+      all(_obl[a] < _obl[b] for a, b in zip(sorted(_obl), sorted(_obl)[1:])))
+check("sin supersónico relativo no hay choque de pasaje: cero exacto",
+      pc._ks_passage_shock(0.95, 0.7, 0.9, 0.5, 1.3, 0.06, 1.0, 280.0)[0]
+      == 0.0)
+
+# --- Mach representativo: pesa 6:1 hacia el pico de succión -------------
+_om_ks, _d_ks = pc._ks_passage_shock(1.30, 0.85, math.radians(60.0),
+                                     math.radians(45.0), 1.4, 0.05, 1.0,
+                                     260.0)
+check("el pico de succión queda POR ENCIMA del Mach de entrada",
+      _d_ks["m_ss"] > 1.30,
+      f"M₁ 1.30 → M_ss {_d_ks['m_ss']:.3f} (ecs. 31/32 del Apéndice 1)")
+check("y el Mach representativo se pega al pico, no a la entrada (6:1)",
+      abs(_d_ks["m_rep"] - (6.0 * _d_ks["m_ss"] + 1.30) / 7.0) < 1e-9,
+      f"M_rep {_d_ks['m_rep']:.3f}")
+check("la componente normal del choque oblicuo es menor que M_rep",
+      1.0 <= _d_ks["mn1"] < _d_ks["m_rep"],
+      f"Mn₁ {_d_ks['mn1']:.3f} < M_rep {_d_ks['m_rep']:.3f} — es lo que "
+      "separa el choque de pasaje del choque normal")
+
+# --- romo del borde de ataque (ec. 1, de Prince) -------------------------
+check("el romo del BA no cobra nada en subsónico",
+      pc._le_bluntness_ds(0.99, 0.01, 1.0) == 0.0)
+_dsle = [pc._le_bluntness_ds(m, 0.01, 1.0) for m in (1.1, 1.3, 1.5)]
+check("y en supersónico crece con M₁, como manda la ec. (1)",
+      0 < _dsle[0] < _dsle[1] < _dsle[2],
+      "Δs = " + ", ".join(f"{d:.3f}" for d in _dsle) + " J/kg·K")
+check("con el espaciado tangencial: más álabes (b menor) cobra más",
+      pc._le_bluntness_ds(1.4, 0.02, 1.0) >
+      pc._le_bluntness_ds(1.4, 0.01, 1.0))
+
+# --- θ/c: adder empírico y contracción del tubo (Figs. 2a y 4a) ---------
+check("el adder de θ/c del paper sube la pérdida de perfil a toda difusión",
+      all(pc._ks_theta_c(d, 1.0) > pc._lieblein_theta_c(d)
+          for d in (1.1, 1.4, 1.8, 2.2)))
+check("y pesa MÁS a difusión baja, que es donde vive la punta transónica",
+      (pc._ks_theta_c(1.2, 1.0) / pc._lieblein_theta_c(1.2)
+       > pc._ks_theta_c(2.0, 1.0) / pc._lieblein_theta_c(2.0)),
+      f"×{pc._ks_theta_c(1.2, 1.0) / pc._lieblein_theta_c(1.2):.2f} a "
+      f"Deq 1.2 vs ×{pc._ks_theta_c(2.0, 1.0) / pc._lieblein_theta_c(2.0):.2f}"
+      f" a 2.0 — el K_PROFILE = {pc.K_PROFILE} multiplicativo daba lo mismo "
+      "en los dos")
+check("la contracción del tubo de corriente sube θ/c (Fig. 4a)",
+      pc._ks_theta_c(1.5, 1.4) > pc._ks_theta_c(1.5, 1.0)
+      > pc._ks_theta_c(1.5, 0.8))
+
+# --- lo que NO puede pasar: que L0 se mueva ------------------------------
+_a_l0 = pc._row_losses(math.radians(60.0), math.radians(45.0), 300.0,
+                       240.0, 1.4, 2.0, 1.35, 1.20)
+_a_l0b = pc._row_losses(math.radians(60.0), math.radians(45.0), 300.0,
+                        240.0, 1.4, 2.0, 1.35, 1.20, ks=None)
+check("sin `ks`, _row_losses es BIT A BIT la de antes (L0 intacto)",
+      _a_l0[0] == _a_l0b[0] and _a_l0[1] == _a_l0b[1]
+      and _a_l0[2]["shock"] == _a_l0b[2]["shock"]
+      and _a_l0[2]["ds_le"] == 0.0)
+
+# --- calificación de L1 contra medida ------------------------------------
+# Hasta la fase 12.3 la campaña entera corría a L0 sin decirlo: `evaluate`
+# engancha L1 detrás de rec["feasible"] y las cuatro máquinas medidas son
+# INFACTIBLES contra el espacio de diseño del optimizador, así que la
+# puerta lo saltaba en silencio. `run_machine` ahora llama al SCM directo.
+from validation.machines import MACHINES as _MA       # noqa: E402
+from validation.validate import run_machine as _rm    # noqa: E402
+_res = [_rm(m) for m in _MA]
+_l1res = [r for r in _res if (r.get("l1") or {}).get("ok")]
+check("el SCM resuelve al menos dos máquinas medidas",
+      len(_l1res) >= 2,
+      ", ".join(r["name"] for r in _l1res) + " — las otras se rechazan "
+      "por annulus bloqueado y lo DICEN")
+_r37 = next((r for r in _l1res if "Rotor 37" in r["name"]), None)
+check("el plano de ROTOR del SCM existe y es el que está medido",
+      _r37 is not None and abs(_r37["l1"]["dPR_rel"]) < 0.02,
+      f"Rotor 37 a L1: ΔPR {100 * _r37['l1']['dPR_rel']:+.2f}% "
+      f"(L0 {100 * _r37['dPR_rel']:+.2f}%), Δη "
+      f"{100 * _r37['l1']['deta']:+.2f} pts (L0 "
+      f"{100 * _r37['deta']:+.2f})" if _r37 else "sin Rotor 37")
+check("L1 predice el Rotor 37 MEJOR que L0 en las dos cantidades",
+      _r37 is not None
+      and abs(_r37["l1"]["dPR_rel"]) < abs(_r37["dPR_rel"])
+      and abs(_r37["l1"]["deta"]) < abs(_r37["deta"]))
 
 # ==========================================================================
 print(f"\n{_n_pass}/{_n_pass + _n_fail} checks OK"

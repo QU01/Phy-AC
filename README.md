@@ -482,6 +482,32 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
   quantities inside target**, both misses diagnosed.
   Verification 165 → 177 checks.
 
+- **2026-08-17 — L1's loss model rebuilt on Koch & Smith 1976 (phase
+  12.3)**: the first finding was that **the entire validation campaign was
+  running at L0 and nobody had noticed** — `evaluate` gates L1 behind
+  `feasible`, and all four measured machines come out infeasible against
+  the design space (they are research rotors), so the gate skipped it
+  silently. With L1 finally measurable, the first measurement was that it
+  predicted **worse** than L0, and the decomposition pointed at a single
+  term: the shock. L0 averages two span points weighted toward the tip; L1
+  integrates the span honestly and lands 34-42% lower — which exposes that
+  the model underneath, a NORMAL shock at the inlet relative Mach, is not
+  the right one. Koch & Smith (§Shock Losses, Fig. 7) say that curve is the
+  UPPER BOUND: the passage shock is **oblique and decelerates to sonic**,
+  evaluated at a representative Mach that weights the suction-surface peak
+  **6:1** over the inlet value (Appendix 1, eqs. 31/32). Also in: the
+  **leading-edge bluntness** loss (eq. 1, Prince — a source that simply
+  did not exist here), the **θ/c adder of 0.0025** replacing the
+  multiplicative `K_PROFILE`, and the **streamtube contraction**
+  correction (Fig. 4a). All four need solidity, thickness, contraction and
+  tangential spacing PER STREAMLINE — exactly what a meanline cannot feed
+  them. In the plane where each machine is actually measured: **Rotor 37
+  goes from −1.20% to −0.04% in PR and from −1.57 to +0.37 pts in η**;
+  Stage 35 improves in PR (+1.17% → +0.97%) and loses 0.34 pts in η. Still
+  open: two of the four machines do not solve (blocked annulus), and L0
+  keeps the old shock model — changing it would reopen the campaign.
+  Verification 177 → 194 checks.
+
 - **2026-08-16 — L1 becomes a real rung: our own streamline-curvature
   through-flow (phase 11 · F-01/H2)**: `scm_core.py` replaces
   `turbo-design`. It solves the **full radial-equilibrium equation**,

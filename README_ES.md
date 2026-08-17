@@ -401,6 +401,32 @@ predicción de pérdidas → (η, PR). Tabla vigente en
   objetivo**, las dos que fallan con diagnóstico.
   Verificación 165 → 177 checks.
 
+- **2026-08-17 — El modelo de pérdidas de L1, reconstruido sobre Koch &
+  Smith 1976 (fase 12.3)**: primero se descubrió que **la campaña entera
+  corría a L0 y nadie lo había notado** — `evaluate` engancha L1 detrás de
+  `feasible`, y las cuatro máquinas medidas son infactibles contra el
+  espacio de diseño (son rotores de investigación), así que la puerta lo
+  saltaba en silencio. Con L1 ya medible, la primera medida fue que
+  **predecía PEOR que L0**, y la descomposición señaló un único término:
+  el choque. L0 promedia dos puntos del span pesando la punta; L1 integra
+  el span honesto y sale 34-42% más bajo — lo que destapa que el modelo de
+  debajo, choque NORMAL al Mach de entrada, no es el correcto. Koch & Smith
+  (§Shock Losses, Fig. 7) dicen que esa curva es la COTA SUPERIOR: el
+  choque de pasaje es **oblicuo y frena a sónico**, evaluado en un Mach
+  representativo que pesa **6:1** el pico de la superficie de succión
+  (Apéndice 1, ecs. 31/32) sobre el de entrada. Entran también el **romo
+  del borde de ataque** (ec. 1, de Prince — una fuente que no existía), el
+  **adder de θ/c = 0.0025** en vez del `K_PROFILE` multiplicativo, y la
+  **contracción del tubo de corriente** (Fig. 4a). Las cuatro piezas
+  necesitan solidez, espesor, contracción y espaciado POR LÍNEA DE
+  CORRIENTE: es lo que un meanline no puede alimentar. Resultado en el
+  plano donde cada máquina está medida: el **Rotor 37 pasa de −1.20% a
+  −0.04% en PR y de −1.57 a +0.37 pts en η**, el Stage 35 mejora en PR
+  (+1.17% → +0.97%) y empeora 0.34 pts en η. Sigue abierto que dos de las
+  cuatro máquinas no resuelven (annulus bloqueado) y que L0 conserva el
+  choque viejo — cambiarlo reabriría la campaña. Verificación 177 → 195
+  checks.
+
 - **2026-08-16 — L1 pasa a ser un peldaño de verdad: through-flow propio
   por curvatura de líneas de corriente (fase 11 · F-01/H2)**:
   `scm_core.py` sustituye a `turbo-design`. Resuelve la **ecuación de

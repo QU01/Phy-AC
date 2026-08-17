@@ -174,7 +174,9 @@ def write_report(cov: list[dict], grid: list[dict], meta: dict) -> str:
          "espacio de diseño completo.", "",
          "**No es validación**: no hay ninguna máquina medida aquí. Esto "
          "caracteriza el solver contra sí mismo y contra L0. La "
-         "calificación contra medida es F-02 y sigue abierta.", ""]
+         "calificación de L1 CONTRA MEDIDA la hace `validate.py` desde la "
+         "fase 12.3 (tabla «Mismas máquinas a L1»), y el mapa fuera de "
+         "diseño es F-02.", ""]
 
     # --- 1. cobertura -----------------------------------------------------
     L += ["## 1. Cobertura", "",

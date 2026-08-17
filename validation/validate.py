@@ -162,6 +162,7 @@ def run_machine(m: dict) -> dict:
         theta = build_theta(m["spec"], m["measured"], m.get("slopes"))
         rec = evaluate(theta, fidelity=Fidelity.L0, use_cache=False,
                        calibrate=False)
+        l1 = _l1_metrics(theta, rec, m)
     finally:
         _pc.TIP_CLEARANCE_MM = eps_saved
     model = model_metrics(rec, m["spec"], m["kind"])
@@ -181,8 +182,40 @@ def run_machine(m: dict) -> dict:
         PR_pass=abs(dPR_rel) < pr_tol,
         eta_pass=abs(deta) < eta_tol,
         eta_guard=abs(deta) < ETA_GUARD_PTS,
-        record=rec, machine=m,
+        record=rec, machine=m, l1=l1,
     )
+
+
+def _l1_metrics(theta, rec: dict, m: dict) -> dict:
+    """La MISMA calificación, pero a fidelidad L1.
+
+    Hasta la fase 12.3 la campaña entera corría a L0 y nadie lo había
+    notado, porque `evaluate` engancha L1 detrás de `rec["feasible"]` y las
+    cuatro máquinas medidas salen INFACTIBLES: son rotores de
+    investigación empujados más allá de lo que el espacio de diseño del
+    optimizador admite. O sea, se pedía L1, la puerta lo saltaba en
+    silencio y volvía L0 con la misma etiqueta. Aquí se llama al solver
+    DIRECTO, saltando esa puerta: la factibilidad es una restricción de
+    DISEÑO, no un requisito para resolver el flujo de una máquina que
+    existe y de la que hay medidas.
+
+    Para un caso `rotor` el plano medido es la salida del ROTOR AISLADO,
+    así que se lee `scm["rotor1"]` y no la salida de máquina.
+    """
+    try:
+        import scm_core
+        scm = scm_core.solve(theta, rec)
+    except Exception as e:                      # noqa: BLE001
+        return dict(ok=False, reason=f"{type(e).__name__}: {e}")
+    src = scm["scm"].get("rotor1") if m["kind"] == "rotor" else scm
+    if not src:
+        return dict(ok=False, reason="el SCM no emitió el plano de rotor")
+    meas = m["measured"]
+    ek = "eta_isen" if "eta_isen" in meas else "eta_poly"
+    return dict(ok=True, PR=float(src["PR"]), eta=float(src[ek]),
+                dPR_rel=(src["PR"] - meas["PR"]) / meas["PR"],
+                deta=src[ek] - meas[ek],
+                iterations=int(scm["scm"]["iterations"]))
 
 
 def run_offdesign(o: dict) -> dict:
@@ -394,6 +427,32 @@ def write_results_md(results: list[dict], anchors: list[dict],
             f"({r['eta_key']}) | {r['eta_meas']:.3f} | "
             f"{100 * r['deta']:+.1f} | {_fmt_status(r['PR_pass'])} | "
             f"{_fmt_status(r['eta_pass'])} |")
+    # --- las mismas máquinas a L1 (fase 12.3) ----------------------------
+    lines += [
+        "", "## Las mismas máquinas a fidelidad L1 (SCM)", "",
+        "Desde la fase 12.3 la campaña también califica L1 contra medida, "
+        "llamando al SCM DIRECTO (la puerta de factibilidad de `evaluate` "
+        "es una restricción de diseño, no un requisito para resolver una "
+        "máquina que existe). Para los rotores aislados se compara el "
+        "plano `scm[\"rotor1\"]`, que es donde están medidos. El modelo "
+        "de pérdidas de L1 es el de Koch & Smith 1976 por sección "
+        "(docs/VALIDATION.md, fase 12.3).", "",
+        "| Máquina | PR modelo | ΔPR | η modelo | Δη [pts] | vs L0 |",
+        "|---|---|---|---|---|---|",
+    ]
+    for r in results:
+        l1 = r.get("l1") or {}
+        if not l1.get("ok"):
+            lines.append(f"| {r['name']} | — | — | — | — | "
+                         f"no resuelve: {l1.get('reason', '?')} |")
+            continue
+        b_pr = abs(l1["dPR_rel"]) < abs(r["dPR_rel"])
+        b_eta = abs(l1["deta"]) < abs(r["deta"])
+        lines.append(
+            f"| {r['name']} | {l1['PR']:.3f} | {l1['dPR_rel']:+.2%} | "
+            f"{l1['eta']:.3f} | {100 * l1['deta']:+.1f} | "
+            f"PR {'mejor' if b_pr else 'peor'}, "
+            f"η {'mejor' if b_eta else 'peor'} |")
     # --- fuera de diseño (F-02) -------------------------------------------
     if offd:
         lines += [
@@ -513,6 +572,27 @@ def main(argv=None) -> int:
     for a in anchors:
         print(f"{a['name']:26s} {'ancla':8s} {'':>14s} {'':>8s} {'':>14s} "
               f"{'':>7s}  {_fmt_status(a['ok'])}")
+
+    print()
+    print(f"{'Mismas máquinas a L1 (SCM)':26s} {'plano':8s} "
+          f"{'PR mod/med':>14s} {'ΔPR':>8s} {'η mod/med':>14s} {'Δη':>7s}"
+          f"   vs L0")
+    for r in results:
+        l1 = r.get("l1") or {}
+        if not l1.get("ok"):
+            print(f"{r['name']:26s} {r['kind']:8s} "
+                  f"{'— ' + str(l1.get('reason', ''))[:56]}")
+            continue
+        # ¿mejora L1 sobre L0 en el plano medido? Es la pregunta que la
+        # campaña no podía contestar antes de la fase 12.3.
+        b_pr = abs(l1["dPR_rel"]) < abs(r["dPR_rel"])
+        b_eta = abs(l1["deta"]) < abs(r["deta"])
+        print(f"{r['name']:26s} {r['kind']:8s} "
+              f"{l1['PR']:6.3f}/{r['PR_meas']:.3f} {l1['dPR_rel']:+8.2%} "
+              f"{l1['eta']:6.3f}/{r['eta_meas']:.3f} "
+              f"{100 * l1['deta']:+6.1f}p   "
+              f"PR {'mejor' if b_pr else 'peor '} "
+              f"η {'mejor' if b_eta else 'peor '}")
 
     if offd:
         print()

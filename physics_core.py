@@ -493,10 +493,259 @@ def _shock_omega(M: float, g: float = GAMMA) -> float:
     return (1.0 - _normal_shock_p0_ratio(M, g)) / max(dyn, 1e-3)
 
 
+# ==========================================================================
+# 1b. Choque de pasaje y romo del borde de ataque — Koch & Smith 1976
+#
+# `_shock_omega(M1)` pone un CHOQUE NORMAL al Mach RELATIVO DE ENTRADA de
+# la fila. Koch & Smith (§"Shock Losses", Fig. 7) dicen que eso es la cota
+# superior, no el modelo: la curva «Normal Shock at M₁» de la Fig. 7 va muy
+# por encima de los coeficientes calculados para los fans reales que
+# tabulan. Su modelo tiene DOS fuentes, y las dos están aquí:
+#
+#   1. CHOQUE DE PASAJE. «this loss is equivalent to the entropy rise of
+#      one oblique shock that reduces a representative passage inlet Mach
+#      number to unity» — OBLICUO, y a M=1 (o al Mach de salida si es
+#      supersónico). Y el Mach representativo NO es el de entrada: es la
+#      media pesada del Mach de PICO EN LA SUPERFICIE DE SUCCIÓN (ecs. 31
+#      y 32 del Apéndice 1) con el de entrada, «weights the Mach number
+#      deduced from equations (31) and (32) six times as heavily as the
+#      upstream Mach number». Los dos efectos van en sentidos contrarios:
+#      el pico de succión SUBE el Mach que ve el choque, y que el choque
+#      sea oblicuo en vez de normal BAJA mucho la pérdida.
+#
+#   2. ROMO DEL BORDE DE ATAQUE (ec. 1, de D. C. Prince, GE). Una fuente
+#      que este modelo simplemente no tenía. El paper la considera
+#      sustancial a Mach alto y dice que predice unos dos tercios de la
+#      pérdida de rendimiento medida en las dos configuraciones
+#      experimentales con las que la contrastan.
+#
+# Por qué vive aquí y no solo en L1: es física de FILA, no de span. Pero
+# solo L1 tiene con qué alimentarla — el pico de succión necesita solidez,
+# espesor, contracción del tubo de corriente y ángulos EN CADA LÍNEA DE
+# CORRIENTE, y el meanline solo tiene el triángulo medio y el annulus. Por
+# eso la firma de `_row_losses` la toma como argumento OPCIONAL: sin `ks`
+# el comportamiento es idéntico al de antes, bit a bit, y la campaña de
+# validación L0 (docs/VALIDATION.md) no se mueve.
+# ==========================================================================
+
+# Apéndice 1, constantes ajustadas por los autores sobre 34 cascadas
+# (σ 0.5-2.0, stagger 5-67°, camber 0-60°, t_max/c 0.03-0.15) con
+# desviación RMS de ±1.8% en V_max/V₁:
+KS_K1 = 0.2445                # ec. (17) — reparto de la circulación
+KS_K2 = 0.4458                # ec. (23) — bloqueo por espesor
+KS_K3 = 0.7688                # ec. (32) — efecto del espesor en el pico
+KS_K4 = 0.6024                # ec. (32) — efecto de la circulación
+KS_SS_WEIGHT = 6.0            # «six times as heavily as the upstream Mach
+#                               number» — el peso del pico de succión
+#                               frente al Mach de entrada en el Mach
+#                               representativo del choque de pasaje.
+KS_MZ_MAX = 0.75              # tope del Mach MERIDIONAL en la ec. (30).
+#                               No es un número inventado: es la condición
+#                               de validez que declara el propio Apéndice
+#                               1 — la correlación vale «provided [...]
+#                               meridional Mach numbers of the annulus are
+#                               held low enough to prevent blade thickness
+#                               blockage of the annulus from distorting the
+#                               flow pattern as might occur if the passage
+#                               throat were choked». La forma diferencial
+#                               de la ec. (25) lleva un 1/(1−M_z²) que a
+#                               M_z = 0.92 ya amplifica ×5.5 y dispara el
+#                               pico de succión a Mach absurdos; a 0.75
+#                               amplifica ×1.3. Un axial real corre a
+#                               M_meridional 0.4-0.6.
+KS_VMAX_CEIL = 2.0            # techo duro de V_max/V₁. Backstop: si se
+#                               alcanza, la sección está fuera del rango
+#                               ajustado por los autores (34 cascadas,
+#                               σ 0.5-2.0, stagger 5-67°, camber 0-60°,
+#                               t_max/c 0.03-0.15) y lo que sigue sería
+#                               extrapolación, no correlación.
+KS_MREP_MAX = 2.2             # techo del Mach REPRESENTATIVO del choque.
+#                               La Fig. 7 llega a M₁ = 1.8 y los datos de
+#                               fan con los que la contrastan no pasan de
+#                               ~1.6; Koch 1981 declara el rango de validez
+#                               de esta familia de correlaciones en
+#                               M 0.1-1.6. Por encima de 2.2 no hay
+#                               correlación que aplicar, hay
+#                               extrapolación. Se acota y se DICE: el
+#                               diagnóstico devuelve `clamped=True` para
+#                               que quien mire el campo lo vea.
+KS_THETA_ADDER = 0.0025       # «the momentum-thickness-to-chord ratio [...]
+#                               is increased by 0.0025 at all values of
+#                               diffusion ratio. This adjustment reduces the
+#                               calculated efficiency by about 1.0 to 1.5
+#                               points» (§Comparisons With Compressor Test
+#                               Data). Es el mismo hueco que este modelo
+#                               tapaba con K_PROFILE = 1.24, pero
+#                               MULTIPLICATIVO: los dos coinciden cerca de
+#                               Deq ≈ 1.8 y se separan mucho a difusión
+#                               baja, que es justo donde vive la punta de
+#                               un rotor transónico. El paper insiste en
+#                               que el adder va SOLO en la pérdida de
+#                               perfil, nunca en la de pared.
+KS_CONTRACTION_SLOPE = 0.55   # Fig. 4(a): θ/θ|h₁/h₂=1 crece linealmente
+#                               con la contracción del tubo de corriente
+#                               (de ≈0.75 en h₁/h₂ = 0.6 a ≈1.55 en 2.0,
+#                               pasando por 1.0 en 1.0). En un compresor
+#                               el tubo se CONTRAE al subir la densidad, o
+#                               sea h₁/h₂ > 1 y la pérdida de perfil sube.
+
+
+def _ks_theta_c(deq: float, h1_over_h2: float) -> float:
+    """θ/c de Koch & Smith: Lieblein + adder empírico + contracción.
+
+    Los dos correctores son del paper y los dos suben la pérdida en un
+    compresor real. La contracción es lo que en un meanline habría que
+    estimar del annulus y aquí sale del tubo de corriente.
+    """
+    th = _lieblein_theta_c(deq) + KS_THETA_ADDER
+    f_con = 1.0 + KS_CONTRACTION_SLOPE * (
+        min(max(h1_over_h2, 0.6), 2.0) - 1.0)
+    return th * f_con
+
+
+def _ks_circulation(beta1: float, beta2: float, sigma: float) -> float:
+    """Γ* — parámetro de circulación de cascada 2-D, ec. (19)."""
+    return (math.cos(beta1) * (math.tan(beta1) - math.tan(beta2))
+            / max(sigma, 1e-3))
+
+
+def _ks_suction_peak(beta1: float, beta2: float, sigma: float,
+                     tmax_c: float, area_ratio: float,
+                     mach1: float) -> float:
+    """V_max/V₁ en la superficie de succión — Apéndice 1, ecs. (22)-(32).
+
+    `area_ratio` = A_a2/A_a1 de la fila (contracción del tubo de
+    corriente: en L1 es la del TUBO, no la del annulus, que es justo la
+    corrección de la Fig. 4 del paper hecha exacta). `mach1` es el Mach
+    relativo de entrada de la sección.
+    """
+    g_star = _ks_circulation(beta1, beta2, sigma)
+    b_bar = 0.5 * (beta1 + beta2)              # β̄, ángulo medio de la cascada
+    # ec. (23): bloqueo por espesor en la garganta, 1 − τ/b
+    one_tau = 1.0 - KS_K2 * sigma * tmax_c / max(math.cos(b_bar), 1e-3)
+    # ec. (22): A_p* con la contracción a un TERCIO de la cuerda axial
+    # (ec. 21: la garganta cae en el primer tercio del pasaje)
+    a_p = max(one_tau * (1.0 - (1.0 - area_ratio) / 3.0), 0.15)
+    # ec. (30): densidad en la garganta desde la forma diferencial de la
+    # gasdinámica isentrópica (ecs. 24-29)
+    mz = min(abs(mach1 * math.cos(beta1)), KS_MZ_MAX)
+    rho_p = 1.0 - (mz ** 2 / max(1.0 - mz ** 2, 1e-3)) * (
+        1.0 - a_p - KS_K1 * (math.tan(beta1) / max(math.cos(beta1), 1e-3))
+        * sigma * g_star)
+    rho_p = min(max(rho_p, 0.60), 1.40)
+    # ec. (31): velocidad de pasaje V_p/V₁ (tangencial por circulación,
+    # axial por continuidad con bloqueo y contracción)
+    v_up = math.sin(beta1) - KS_K1 * sigma * g_star
+    v_xp = math.cos(beta1) / max(a_p * rho_p, 1e-3)
+    vp_v1 = math.sqrt(v_up ** 2 + v_xp ** 2)
+    # ec. (32): del pasaje al PICO de succión (espesor + circulación). El
+    # tope inferior en 1.0 cubre el caso Γ* < 0 (sección que acelera en vez
+    # de difundir, fuera del rango del paper): el pico no puede quedar por
+    # DEBAJO de la velocidad de pasaje.
+    return min(vp_v1 * max(1.0 + KS_K3 * tmax_c + KS_K4 * g_star, 1.0),
+               KS_VMAX_CEIL)
+
+
+def _oblique_shock_p0_ratio(M1: float, m2_target: float,
+                            g: float = GAMMA) -> tuple[float, float]:
+    """(P02/P01, Mn1) del choque OBLICUO que lleva M₁ hasta `m2_target`.
+
+    Es el modelo de choque de pasaje de Koch & Smith: un solo choque
+    oblicuo cuyo Mach de salida es el sónico (o el de salida de la fila si
+    esa es supersónica). Se busca el ángulo de onda que cumple esa
+    condición; la pérdida es la del choque NORMAL a la componente normal
+    Mn₁ = M₁·sen(β_w). Si ni el choque normal frena lo suficiente, el
+    choque normal es la respuesta.
+    """
+    if M1 <= 1.0 or m2_target >= M1:
+        return 1.0, min(M1, 1.0)
+
+    def m2_of(bw: float) -> float:
+        mn1 = M1 * math.sin(bw)
+        if mn1 <= 1.0:
+            return M1
+        mn2 = math.sqrt((1.0 + 0.5 * (g - 1) * mn1 ** 2)
+                        / (g * mn1 ** 2 - 0.5 * (g - 1)))
+        num = 2.0 / math.tan(bw) * (M1 ** 2 * math.sin(bw) ** 2 - 1.0)
+        den = M1 ** 2 * (g + math.cos(2.0 * bw)) + 2.0
+        th = math.atan2(num, max(den, 1e-6))
+        return mn2 / max(math.sin(bw - th), 1e-3)
+
+    lo = math.asin(min(1.0 / M1, 1.0))          # onda de Mach: M₂ = M₁
+    hi = 0.5 * math.pi                          # choque normal: M₂ mínimo
+    if m2_of(hi) > m2_target:                   # ni el normal basta
+        return _normal_shock_p0_ratio(M1, g), M1
+    for _ in range(50):
+        mid = 0.5 * (lo + hi)
+        if m2_of(mid) > m2_target:
+            lo = mid
+        else:
+            hi = mid
+    bw = 0.5 * (lo + hi)
+    mn1 = max(M1 * math.sin(bw), 1.0)
+    return _normal_shock_p0_ratio(mn1, g), mn1
+
+
+def _ks_passage_shock(mach1: float, mach2: float, beta1: float,
+                      beta2: float, sigma: float, tmax_c: float,
+                      area_ratio: float, T1: float,
+                      g: float = GAMMA) -> tuple[float, dict]:
+    """ω̄ del choque de pasaje de Koch & Smith, referida a q₁ de la fila.
+
+    Devuelve (ω̄, diagnóstico). Cero exacto si la sección es subsónica: sin
+    supersónico relativo no hay choque de pasaje que evaluar.
+    """
+    if mach1 <= 1.0:
+        return 0.0, dict(m_ss=mach1, m_rep=mach1, mn1=mach1, clamped=False)
+    # V_max/V₁ → M_max: la conversión no es directa, hay que pasar por la
+    # temperatura estática (el pico está más frío que la entrada).
+    v_ratio = _ks_suction_peak(beta1, beta2, sigma, tmax_c, area_ratio,
+                               mach1)
+    a1 = math.sqrt(g * RGAS * max(T1, 1.0))
+    v1 = mach1 * a1
+    v_max = v_ratio * v1
+    cp = cp_air(T1)
+    T0r = T1 + v1 ** 2 / (2.0 * cp)
+    T_max = max(T0r - v_max ** 2 / (2.0 * cp), 0.35 * T0r)
+    # El pico de succión de una sección de COMPRESOR no puede quedar por
+    # debajo del Mach de entrada: la sección difunde, no acelera.
+    m_ss = max(v_max / math.sqrt(g * RGAS * T_max), mach1)
+    # media pesada 6:1 hacia el pico de succión
+    m_rep = (KS_SS_WEIGHT * m_ss + mach1) / (KS_SS_WEIGHT + 1.0)
+    clamped = m_rep > KS_MREP_MAX
+    m_rep = min(m_rep, KS_MREP_MAX)
+    # el choque oblicuo lo frena a sónico, o al Mach de salida si la fila
+    # sale supersónica
+    r, mn1 = _oblique_shock_p0_ratio(m_rep, max(mach2, 1.0), g)
+    dyn = 1.0 - (1.0 + 0.5 * (g - 1) * mach1 ** 2) ** (-g / (g - 1))
+    om = (1.0 - r) / max(dyn, 1e-3)
+    return om, dict(m_ss=m_ss, m_rep=m_rep, mn1=mn1, v_max_over_v1=v_ratio,
+                    clamped=clamped)
+
+
+def _le_bluntness_ds(mach1: float, t_le_over_b: float,
+                     beta1: float) -> float:
+    """Δs [J/kg·K] por ROMO del borde de ataque — ec. (1), de D. C. Prince.
+
+        Δs/R = −ln{1 − t_LE/(b·cosβ₁)·[1.28(M₁−1) + 0.96(M₁−1)²]}
+
+    t_LE espesor del borde de ataque, b espaciado tangencial. Recoge tanto
+    el choque de BA como el refuerzo local que ese choque produce dentro
+    del pasaje. Solo existe con M₁ supersónico.
+    """
+    if mach1 <= 1.0 or t_le_over_b <= 0.0:
+        return 0.0
+    dm = mach1 - 1.0
+    x = t_le_over_b / max(math.cos(beta1), 1e-3) * (
+        1.28 * dm + 0.96 * dm ** 2)
+    return -RGAS * math.log(max(1.0 - x, 0.05))
+
+
 def _row_losses(beta1: float, beta2: float, W1: float, W2: float,
                 sigma: float, h_over_c: float, M_tip: float,
                 M_mean: float, re_c: float | None = None,
-                gam: float = GAMMA) -> tuple[float, float, dict]:
+                gam: float = GAMMA,
+                ks: dict | None = None) -> tuple[float, float, dict]:
     """Pérdidas de una fila en el marco relativo a la fila.
 
     beta1/beta2 en rad (ángulos de flujo entrada/salida respecto al eje,
@@ -507,6 +756,14 @@ def _row_losses(beta1: float, beta2: float, W1: float, W2: float,
     corrección, equivale a Re ≥ 10⁶). Devuelve (omega_bar_total,
     dh_loss [J/kg], desglose). ω̄ está referida a la presión dinámica de
     ENTRADA de la fila.
+
+    `ks` (opcional) activa el modelo de choque de Koch & Smith 1976 en vez
+    del choque normal promediado en dos puntos: dict con `M2` (Mach
+    relativo de SALIDA de la fila), `tmax_c`, `area_ratio` (A₂/A₁ del tubo
+    de corriente), `T1` y `t_le_over_b`. Solo lo pasa L1, que es quien
+    tiene esas cuatro cosas por línea de corriente; sin él esta función es
+    bit a bit la de antes. El Δs del romo del BA sale en
+    `detail["ds_le"]` — es entropía, no ω̄, y quien llama la suma aparte.
     """
     cb1, cb2 = math.cos(beta1), math.cos(beta2)
     tb1, tb2 = math.tan(beta1), math.tan(beta2)
@@ -514,7 +771,14 @@ def _row_losses(beta1: float, beta2: float, W1: float, W2: float,
     # Difusión equivalente de Lieblein (forma de circulación, diseño)
     deq = (cb2 / max(cb1, 1e-3)) * (
         1.12 + 0.61 * (cb1 ** 2 / max(sigma, 1e-3)) * abs(tb1 - tb2))
-    theta_c = _lieblein_theta_c(deq)
+    if ks is None:
+        theta_c = _lieblein_theta_c(deq)
+        k_prof = K_PROFILE
+    else:
+        # L1: el adder de θ/c del paper en vez del multiplicador global, y
+        # la corrección por contracción del tubo de corriente (Fig. 4a).
+        theta_c = _ks_theta_c(deq, float(ks["h1_over_h2"]))
+        k_prof = 1.0
     # Efecto del Mach de entrada sobre la pérdida de PERFIL (Koch & Smith
     # 1976, §"Blade Profile Loss" y Fig. 6). La correlación de Lieblein es
     # incompresible: no sabe que al subir M el espesor de momento baja
@@ -523,7 +787,7 @@ def _row_losses(beta1: float, beta2: float, W1: float, W2: float,
     # 0.020 → 0.038). Ajuste de esa figura, anclado en M ≈ 0.25:
     f_mach = 1.0 + K_MACH_PROFILE * max(M_mean ** 2 - 0.0625, 0.0)
     # ω̄ de perfil (Lieblein): 2·(θ/c)·(σ/cosβ2)·(cosβ1/cosβ2)²
-    om_profile = K_PROFILE * f_re * f_mach * 2.0 * theta_c * \
+    om_profile = k_prof * f_re * f_mach * 2.0 * theta_c * \
         (sigma / max(cb2, 1e-3)) * (cb1 / max(cb2, 1e-3)) ** 2
     # Secundarias (vórtice de pasaje, Howell): CDs = 0.018·CL². El término
     # de ANNULUS de Howell (CDa = 0.020·s/h) desaparece desde la fase 9: la
@@ -538,15 +802,29 @@ def _row_losses(beta1: float, beta2: float, W1: float, W2: float,
     cd_sec = 0.018 * CL ** 2
     om_endwall = K_ENDWALL * f_re * cd_sec * sigma * cb1 ** 2 / \
         max(cbm, 1e-3) ** 3
-    # Choque: promedio punta/media (dos puntos del span, Miller-style);
-    # sin f_re — la pérdida de choque no es de fricción
-    om_shock = K_SHOCK * 0.5 * (_shock_omega(M_tip, gam)
-                                + _shock_omega(M_mean, gam))
+    # Choque. Sin f_re en ninguno de los dos caminos — la pérdida de
+    # choque no es de fricción.
+    ds_le = 0.0
+    ks_diag: dict = {}
+    if ks is None:
+        # L0: promedio punta/media (dos puntos del span, Miller-style)
+        om_shock = K_SHOCK * 0.5 * (_shock_omega(M_tip, gam)
+                                    + _shock_omega(M_mean, gam))
+    else:
+        # L1: choque de PASAJE oblicuo al Mach representativo + romo del
+        # borde de ataque, los dos de Koch & Smith 1976 (ver §1b).
+        om_shock, ks_diag = _ks_passage_shock(
+            M_mean, float(ks["M2"]), beta1, beta2, sigma,
+            float(ks["tmax_c"]), float(ks["area_ratio"]), float(ks["T1"]),
+            gam)
+        om_shock *= K_SHOCK
+        ds_le = _le_bluntness_ds(M_mean, float(ks["t_le_over_b"]), beta1)
     om_total = om_profile + om_endwall + om_shock
     # ΔP0rel = ω̄·½ρW1² → pérdida de entalpía ≈ ΔP0rel/ρ = ω̄·½W1²
     dh = om_total * 0.5 * W1 ** 2
     detail = dict(profile=om_profile, endwall=om_endwall, shock=om_shock,
-                  deq=deq, CL=CL, f_re=f_re, re_c=re_c)
+                  deq=deq, CL=CL, f_re=f_re, re_c=re_c, ds_le=ds_le,
+                  **ks_diag)
     return om_total, dh, detail
 
 
