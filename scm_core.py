@@ -122,6 +122,22 @@ PR_WINDOW = 0.15               # |PR_L1/PR_L0 − 1| máximo admisible.
 TIP_BAND_FRAC = 0.25           # fracción de span sobre la que se reparte
 #                                la pérdida de holgura de punta
 WALL_BAND_FRAC = 0.30          # ídem para la capa límite de pared
+SPAN_MIX_PER_ROW = 0.20        # mezcla radial EFECTIVA entre tubos de
+#   corriente vecinos, aplicada una vez por fila a s y h₀. Sin ella el
+#   método no tiene mecanismo que reparta lo que la turbulencia y los
+#   flujos secundarios reparten en la máquina real (Adkins & Smith 1982,
+#   Gallimore & Cumpsty 1986): las bandas de pared acumulan la entropía
+#   de TODAS las filas en las mismas líneas, el gradiente T·∂s/∂r
+#   distorsiona el equilibrio radial, el álabe de ángulo fijo convierte
+#   la distorsión en trabajo no uniforme y el lazo se compone. Medido en
+#   el E³ (10 etapas) antes de esta constante: ds de pared 105-135
+#   J/kg·K contra 20 en medio span, h₀ del cubo 212 kJ/kg contra 117 en
+#   punta y CONTRA-remolino de -224 m/s en una salida de rotor — hasta
+#   bloquear la marcha en la etapa 5. En monoetapa apenas actúa (una o
+#   dos aplicaciones); su efecto medido en los anclajes L1 es <0.1% de
+#   PR. El intercambio es SIMÉTRICO entre tubos de igual gasto, así que
+#   conserva la media másica de h₀ y s exactamente (la generación de
+#   entropía del propio mezclado es de segundo orden y se desprecia).
 
 
 class SCMDiverged(RuntimeError):
@@ -360,6 +376,22 @@ def _alpha_out_metal(row: dict, r: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Solver
 # ---------------------------------------------------------------------------
+def _span_mix(f: np.ndarray,
+              alpha: float = SPAN_MIX_PER_ROW) -> np.ndarray:
+    """Una pasada de mezcla radial entre tubos de corriente vecinos.
+
+    Difusión explícita en el índice de tubo (los tubos llevan el mismo
+    gasto, así que el intercambio simétrico conserva la media másica
+    exactamente), con frontera de Neumann: la pared no aporta ni quita.
+    α ≤ 0.5 por estabilidad del esquema explícito.
+    """
+    g = f.copy()
+    g[1:-1] += alpha * (f[2:] - 2.0 * f[1:-1] + f[:-2])
+    g[0] += alpha * (f[1] - f[0])
+    g[-1] += alpha * (f[-2] - f[-1])
+    return g
+
+
 def _solve_station_cm(r: np.ndarray, cu: np.ndarray, h0: np.ndarray,
                       ds: np.ndarray, T: np.ndarray, cm_prev: np.ndarray,
                       kappa: np.ndarray, cos_g: np.ndarray,
@@ -398,7 +430,18 @@ def _solve_station_cm(r: np.ndarray, cu: np.ndarray, h0: np.ndarray,
         c2 = cm ** 2 + cu ** 2
         _T, _p, rho = _static_state(h0, c2, ds, T0_in, P0_in)
         a = np.sqrt(pc.GAMMA * pc.RGAS * np.maximum(_T, 1.0))
-        mach = float(np.max(np.sqrt(c2) / a))
+        # Mach MERIDIONAL, no absoluto. Dentro de esta bisección Cu está
+        # FIJO, así que d(ρ·Cm)/dCm = ρ·(1 − Cm²/a²): el gasto satura
+        # cuando el Mach MERIDIONAL llega a 1, sin que importe el remolino.
+        # Con la guarda sobre el Mach absoluto (el bug que esto arregla),
+        # el cubo de un vórtice libre con HTR bajo —Cu_hub ∝ r_m/r_hub—
+        # tocaba M_abs 0.98 con Cm aún pequeño y la estación se declaraba
+        # BLOQUEADA al ~55% de su capacidad real: el R67 (HTR 0.375) y el
+        # E³ enteros se perdían por esto. Flujo localmente supersónico en
+        # ABSOLUTO con Cm subsónico es un estado normal detrás del cubo de
+        # un rotor transónico; el estátor de detrás paga su choque en el
+        # modelo de pérdidas, no aquí.
+        mach = float(np.max(cm / a))
         f = rho * cm * cos_g * 2.0 * math.pi * r * kb
         m = 0.5 * float(np.sum((f[1:] + f[:-1]) * (r[1:] - r[:-1])))
         return m, cm, _T, mach
@@ -477,9 +520,20 @@ def solve(theta: np.ndarray, record: dict,
         a = np.linspace(0.0, 1.0, n_sl)
         R[k] = np.sqrt(stn["r_hub"] ** 2
                        + a * (stn["r_tip"] ** 2 - stn["r_hub"] ** 2))
+    # Cm inicial = el Cx de DISEÑO de la etapa de cada estación. La
+    # versión anterior era ṁ/(A·kb·1.2), con 1.2 = densidad AMBIENTE:
+    # válida en la etapa 0 y un disparate creciente hacia atrás (en la
+    # etapa 4 del E³, ρ real ≈ 4.7 → Cm inicial 552 m/s, meridional
+    # supersónico; el cierre del álabe arrancaba en Cu = ωr − 552·tanβ₂ ≈
+    # −200 m/s y la primera bisección declaraba la estación bloqueada).
+    # Era LA razón de que la cobertura del banco cayera con el número de
+    # etapas: no un límite del acoplamiento L0↔L1, un arranque en frío
+    # con la densidad equivocada. El meanline ya calculó el Cx de cada
+    # etapa con su densidad real — se arranca de ahí.
     CM = np.zeros((n_stat, n_sl))
+    st_tab = record["stage_table"]
     for k, stn in enumerate(stations):
-        CM[k] = mdot / max(stn["area"] * stn["kb"] * 1.2, 1e-6)
+        CM[k] = float(st_tab[min(stn["stage"], len(st_tab) - 1)]["Cx"])
     KAPPA = np.zeros((n_stat, n_sl))
     COSG = np.ones((n_stat, n_sl))
     z_stat = np.array([s["z"] for s in stations])
@@ -566,6 +620,12 @@ def solve(theta: np.ndarray, record: dict,
                     break
             cu_te = omega * r_te - cm_te * np.tan(b2m)
             h0_te = H0[k_le] + omega * (r_te * cu_te - r_le * cu_le)
+            # mezcla radial efectiva en el hueco tras la fila (ver
+            # SPAN_MIX_PER_ROW): sin ella la entropía de pared se acumula
+            # fila a fila en las mismas líneas y en multietapa el
+            # equilibrio radial se distorsiona hasta bloquear la marcha
+            h0_te = _span_mix(h0_te)
+            ds_te = _span_mix(ds_te)
             CU[k_te], H0[k_te], DS[k_te], CM[k_te] = (cu_te, h0_te,
                                                       ds_te, cm_te)
             _, TS[k_te], _lim = _solve_station_cm(
@@ -614,7 +674,10 @@ def solve(theta: np.ndarray, record: dict,
                 if d_cm < 1e-4 * max(float(np.mean(cm_new)), 1.0):
                     break
             cu_se = cm_se * np.tan(a_out)
-            CU[k_se], H0[k_se], DS[k_se], CM[k_se] = (cu_se, H0[k_te],
+            # misma mezcla radial en el hueco tras el estátor
+            h0_se = _span_mix(H0[k_te])
+            ds_se = _span_mix(ds_se)
+            CU[k_se], H0[k_se], DS[k_se], CM[k_se] = (cu_se, h0_se,
                                                       ds_se, cm_se)
             _, TS[k_se], _lim = _solve_station_cm(
                 r_se, cu_se, H0[k_se], ds_se, TS[k_se], cm_se, KAPPA[k_se],
@@ -646,14 +709,27 @@ def solve(theta: np.ndarray, record: dict,
     if not converged:
         raise SCMDiverged(f"sin converger en {SCM_MAX_ITER} iteraciones "
                           f"(movimiento residual {move:.2e})")
-    if lim_hits:
-        # El limitador de perfil sigue activo en la última pasada: el campo
-        # que saldría está amasado por él, no por la física. Se degrada a
-        # L0 ETIQUETADO en vez de devolver un número con buena pinta.
+    # ¿El limitador de perfil AMASÓ el campo final? La versión anterior
+    # rechazaba si el limitador se había tocado en CUALQUIER llamada de la
+    # última pasada — pero el cierre del álabe pasa por transitorios que
+    # el limitador estabiliza (para eso está) y que luego convergen a un
+    # campo sano lejos del límite: el E³ entero se rechazaba por golpes en
+    # iteraciones intermedias con un campo final impecable. El criterio
+    # honesto es el CAMPO CONVERGIDO: si alguna estación tiene el perfil
+    # clavado en los límites, el número que saldría es del limitador y no
+    # de la física — se degrada a L0 etiquetado. Si el campo final vive
+    # dentro de los límites, los transitorios son historia del solver.
+    lim_final = 0
+    for k in range(n_stat):
+        mean = max(float(np.mean(CM[k])), 1e-6)
+        if (float(np.min(CM[k])) <= CM_SPREAD_MIN * mean * 1.001
+                or float(np.max(CM[k])) >= CM_SPREAD_MAX * mean * 0.999):
+            lim_final += 1
+    if lim_final:
         raise SCMDiverged(
             f"el limitador de perfil de Cm sigue activo al converger "
-            f"({lim_hits} estaciones): el equilibrio radial pide un perfil "
-            f"fuera de [{CM_SPREAD_MIN}, {CM_SPREAD_MAX}]x la media")
+            f"({lim_final} estaciones con el perfil clavado en "
+            f"[{CM_SPREAD_MIN}, {CM_SPREAD_MAX}]x la media)")
 
     # ---- IGV y OGV: las dos filas que el SCM no modela --------------------
     # Son filas de guía sin trabajo que ocupan todo el span; el meanline ya

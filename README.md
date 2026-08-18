@@ -482,6 +482,25 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
   quantities inside target**, both misses diagnosed.
   Verification 165 → 177 checks.
 
+- **2026-08-17 — All FOUR measured machines now solve at L1 (phase
+  12.4)**: phase 12.3 left R67 and E³ dying with "blocked station" under
+  the hypothesis that it was the structural L0↔L1 annulus coupling.
+  Instrumentation dismantled that: three concrete solver defects. The
+  bisection's **sonic guard** used the ABSOLUTE Mach — with Cu fixed the
+  mass flux saturates at MERIDIONAL Mach 1, and the hub swirl of a
+  low-HTR free vortex tripped the guard at 55% of real capacity. The
+  **cold start** used ambient density (ṁ/(A·kb·1.2)): at E³'s stage 4
+  that means Cm = 552 m/s and an unrecoverable blade closure — it was THE
+  reason bench coverage fell with stage count; it now starts from the
+  design Cx. And the **limiter rejection** judged closure transients
+  instead of the converged field. Plus one physical addition: effective
+  **spanwise mixing** of s and h₀ between neighboring streamtubes, once
+  per row (Adkins & Smith 1982, Gallimore & Cumpsty 1986) — without it
+  E³'s wall entropy piled up 20 rows deep on the same streamlines
+  (105-135 J/kg·K vs 20 at midspan). Result: **PR better than L0 on all
+  four** (R37 −0.06%, R67 +0.30%, S35 +0.82%, E³ −4.76% vs −5.58%), η
+  better on two. Verification 194 → 195 checks.
+
 - **2026-08-17 — L1's loss model rebuilt on Koch & Smith 1976 (phase
   12.3)**: the first finding was that **the entire validation campaign was
   running at L0 and nobody had noticed** — `evaluate` gates L1 behind

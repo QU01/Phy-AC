@@ -1188,9 +1188,10 @@ for _n_sl in (7, 11):
 # las líneas salvo el Mach, y refinar la malla apenas movía nada. Con el
 # modelo por sección de la 12.3 el choque y el romo del BA son función
 # FUERTE del radio en la banda de punta: más líneas resuelven mejor ese
-# pico y el PR converge monótonamente hacia abajo (banco: dispersión de
-# malla 0.45% → 1.07% mediana). Es convergencia más lenta, no ruido — y
-# el precio declarado de calcular la pérdida donde ocurre.
+# pico y el PR converge monótonamente hacia abajo (la 12.3 midió la
+# dispersión de malla en 1.07% mediana; la mezcla radial de la 12.4 la
+# bajó a 0.22%, pero el mecanismo sigue existiendo y el umbral se queda
+# holgado a propósito).
 check("el resultado no depende del nº de líneas (7 vs 11, <2%)",
       abs(_pr_sl[7] / _pr_sl[11] - 1.0) < 0.02,
       f"PR 7 líneas {_pr_sl[7]:.4f} vs 11 líneas {_pr_sl[11]:.4f}")
@@ -1436,10 +1437,16 @@ from validation.machines import MACHINES as _MA       # noqa: E402
 from validation.validate import run_machine as _rm    # noqa: E402
 _res = [_rm(m) for m in _MA]
 _l1res = [r for r in _res if (r.get("l1") or {}).get("ok")]
-check("el SCM resuelve al menos dos máquinas medidas",
-      len(_l1res) >= 2,
-      ", ".join(r["name"] for r in _l1res) + " — las otras se rechazan "
-      "por annulus bloqueado y lo DICEN")
+check("el SCM resuelve LAS CUATRO máquinas medidas (fase 12.4)",
+      len(_l1res) == len(_res),
+      ", ".join(r["name"] for r in _l1res) + " — hasta la 12.4 el R67 y "
+      "el E³ se perdían por la guarda sónica sobre el Mach ABSOLUTO y "
+      "por el arranque con densidad ambiente")
+check("y L1 predice el PR mejor que L0 en las CUATRO",
+      all(abs(r["l1"]["dPR_rel"]) < abs(r["dPR_rel"]) for r in _l1res)
+      if len(_l1res) == len(_res) else False,
+      "; ".join(f"{r['name'].split()[-1]}: {100 * r['l1']['dPR_rel']:+.2f}%"
+                f" (L0 {100 * r['dPR_rel']:+.2f}%)" for r in _l1res))
 _r37 = next((r for r in _l1res if "Rotor 37" in r["name"]), None)
 check("el plano de ROTOR del SCM existe y es el que está medido",
       _r37 is not None and abs(_r37["l1"]["dPR_rel"]) < 0.02,

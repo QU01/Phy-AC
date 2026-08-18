@@ -401,6 +401,25 @@ predicción de pérdidas → (η, PR). Tabla vigente en
   objetivo**, las dos que fallan con diagnóstico.
   Verificación 165 → 177 checks.
 
+- **2026-08-17 — Las CUATRO máquinas medidas resuelven a L1 (fase
+  12.4)**: la 12.3 dejó al R67 y al E³ en «estación bloqueada» con la
+  hipótesis de que era el acoplamiento estructural L0↔L1. La
+  instrumentación la desmontó: eran tres defectos concretos. La **guarda
+  sónica** de la bisección usaba el Mach ABSOLUTO — con Cu fijo el gasto
+  satura en el Mach MERIDIONAL, y el remolino de cubo de un vórtice libre
+  con HTR bajo disparaba la guarda al 55% de la capacidad real. El
+  **arranque en frío** usaba densidad ambiente (ṁ/(A·kb·1.2)): en la
+  etapa 4 del E³ eso es Cm = 552 m/s y un cierre de álabe irrecuperable —
+  era LA razón de que la cobertura del banco cayera con las etapas; ahora
+  arranca del Cx de diseño. Y el **rechazo por limitador** juzgaba los
+  transitorios del cierre en vez del campo convergido. Más una mejora
+  física: **mezcla radial efectiva** de s y h₀ entre tubos vecinos, una
+  por fila (Adkins & Smith 1982, Gallimore & Cumpsty 1986) — sin ella la
+  entropía de pared del E³ se acumulaba 20 filas en las mismas líneas
+  (105-135 J/kg·K contra 20 en medio span). Resultado: **PR mejor que L0
+  en las cuatro** (R37 −0.06%, R67 +0.30%, S35 +0.82%, E³ −4.76% contra
+  −5.58%), η mejor en dos. Verificación 194 → 195 checks.
+
 - **2026-08-17 — El modelo de pérdidas de L1, reconstruido sobre Koch &
   Smith 1976 (fase 12.3)**: primero se descubrió que **la campaña entera
   corría a L0 y nadie lo había notado** — `evaluate` engancha L1 detrás de

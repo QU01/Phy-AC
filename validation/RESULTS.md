@@ -19,10 +19,10 @@ Desde la fase 12.3 la campaña también califica L1 contra medida, llamando al S
 
 | Máquina | PR modelo | ΔPR | η modelo | Δη [pts] | vs L0 |
 |---|---|---|---|---|---|
-| NASA Stage 35 | 1.838 | +0.97% | 0.849 | +2.1 | PR mejor, η peor |
-| NASA Rotor 37 | 2.105 | -0.04% | 0.881 | +0.4 | PR mejor, η mejor |
-| NASA Rotor 67 | — | — | — | — | no resuelve: SCMDiverged: estación BLOQUEADA: ni en el límite sónico pasa el gasto (18.366 < 33.250 kg/s) |
-| GE/NASA E3 HPC (10 etapas) | — | — | — | — | no resuelve: SCMDiverged: estación BLOQUEADA: ni en el límite sónico pasa el gasto (30.049 < 54.400 kg/s) |
+| NASA Stage 35 | 1.835 | +0.82% | 0.846 | +1.8 | PR mejor, η peor |
+| NASA Rotor 37 | 2.105 | -0.06% | 0.880 | +0.3 | PR mejor, η mejor |
+| NASA Rotor 67 | 1.635 | +0.30% | 0.923 | -0.7 | PR mejor, η mejor |
+| GE/NASA E3 HPC (10 etapas) | 21.905 | -4.76% | 0.878 | -2.2 | PR mejor, η peor |
 
 ## Fuera de diseño (F-02)
 

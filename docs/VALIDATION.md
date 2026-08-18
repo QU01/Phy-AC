@@ -355,6 +355,91 @@ NO está en el STEP ni en el margen estructural. Por eso la comparación se
 hace con el filete apagado y por eso queda anotado aquí: pendiente de
 investigar.
 
+### Fase 12.4 (2026-08-17) — las CUATRO máquinas resuelven a L1
+
+La fase 12.3 dejó al R67 y al E³ muriendo en «estación BLOQUEADA», con la
+hipótesis documentada de que era el acoplamiento estructural L0↔L1 del
+annulus. La instrumentación estación a estación desmontó esa hipótesis:
+eran **tres defectos concretos del solver**, y los tres tienen arreglo.
+
+1. **La guarda sónica de la bisección usaba el Mach ABSOLUTO.** Dentro de
+   `_solve_station_cm` el Cu de cada línea está fijo, así que
+   d(ρ·Cm)/dCm = ρ·(1 − Cm²/a²): el gasto satura cuando el Mach
+   **MERIDIONAL** llega a 1, sin que importe el remolino. Con la guarda
+   sobre el absoluto, el cubo de un vórtice libre con HTR bajo (R67:
+   0.375, Cu de cubo ≈ 310 m/s) tocaba M_abs 0.98 con Cm aún pequeño y la
+   estación se declaraba bloqueada al ~55% de su capacidad real. Flujo
+   localmente supersónico en absoluto con Cm subsónico es un estado
+   normal detrás del cubo de un rotor transónico; el estátor de detrás
+   paga su choque en el modelo de pérdidas, no en la continuidad.
+
+2. **El arranque en frío usaba la densidad AMBIENTE.** `Cm inicial =
+   ṁ/(A·kb·1.2)` — válido en la etapa 0 y un disparate creciente hacia
+   atrás: en la etapa 4 del E³ (ρ real ≈ 4.7) daba Cm = 552 m/s,
+   meridional supersónico, y el cierre del álabe arrancaba en
+   Cu = ωr − 552·tanβ₂ ≈ −200 m/s — un estado del que la bisección no
+   puede volver. Las etapas 0-3 sobrevivían porque el error era ×1.5;
+   la 4 era ×3.3. **Era LA razón de que la cobertura del banco cayera
+   con el número de etapas** — no el acoplamiento L0↔L1 que el banco
+   hipotetizaba. Ahora arranca del Cx de diseño de cada etapa, que el
+   meanline ya calculó con su densidad real. La marcha del E³ pasa las
+   10 etapas clavada al diseño (h₀ acumulado 49.8/99.8/150.0/200.6
+   kJ/kg contra 48.9/97.8/146.7/195.5 de L0).
+
+3. **El rechazo por limitador juzgaba los transitorios, no el campo.**
+   `solve` rechazaba si el limitador de perfil se había tocado en
+   CUALQUIER llamada de la última pasada — pero el cierre del álabe pasa
+   por transitorios que el limitador estabiliza (para eso está) y que
+   convergen a un campo sano: el E³ entero se rechazaba por golpes
+   intermedios con un campo final impecable. El criterio ahora es el
+   CAMPO CONVERGIDO: solo se rechaza si alguna estación queda con el
+   perfil clavado en los límites.
+
+Y una mejora física que el diagnóstico hizo necesaria: **mezcla radial
+efectiva** (`SPAN_MIX_PER_ROW = 0.20`) entre tubos de corriente vecinos,
+una vez por fila, sobre s y h₀. Sin ella el método no tiene el mecanismo
+que en la máquina real reparte la entropía de pared (turbulencia y flujos
+secundarios — Adkins & Smith 1982, Gallimore & Cumpsty 1986): las bandas
+de pared acumulaban la entropía de las 20 filas del E³ en las mismas
+líneas (ds de pared 105-135 J/kg·K contra 20 en medio span) y el
+gradiente T·∂s/∂r distorsionaba el equilibrio radial. El intercambio es
+simétrico entre tubos de igual gasto: conserva la media másica de h₀ y s
+exactamente.
+
+#### Resultado: la tabla completa, las cuatro máquinas
+
+| Máquina | plano | nivel | ΔPR | Δη [pts] |
+|---|---|---|---|---|
+| NASA Stage 35 | salida de máquina | L0 | +1.17% | +1.75 |
+| | | **L1** | **+0.82%** | +1.77 |
+| NASA Rotor 37 | rotor aislado | L0 | −1.20% | −1.57 |
+| | | **L1** | **−0.06%** | **+0.30** |
+| NASA Rotor 67 | rotor aislado | L0 | −1.20% | −2.46 |
+| | | **L1** | **+0.30%** | **−0.66** |
+| GE/NASA E³ (10 et.) | salida de máquina | L0 | −5.58% | −1.65 |
+| | | **L1** | **−4.76%** | −2.19 |
+
+**PR mejor que L0 en las cuatro.** η mejor en R37 (+0.30 vs −1.57) y R67
+(−0.66 vs −2.46), igual en S35 (+1.77 vs +1.75), y −0.5 pts peor en el
+E³ — coherente con que el E³ es la máquina donde el débito de endwall por
+etapa (Koch & Smith a nivel de etapa) pesa más y la mezcla radial
+efectiva es un modelo de primer orden.
+
+Banco n=80 tras los arreglos: cobertura **84%/76%** (12.3: 78%/70% —
+recupera el nivel previo llevando el modelo de pérdidas nuevo, y el
+«limitador activo» cae de 6/9 diseños a 0/2), dispersión de malla
+**0.22%** mediana (12.3: 0.89% — la mezcla radial suaviza exactamente los
+gradientes de pared que la habían doblado), residual L1−L0 conservado
+(−0.84% / −2.70%). El coste sube a 7.4 s mediana (12.3: 4.3) — el cierre
+del álabe itera más con la mezcla activa.
+
+Lo que sigue abierto de verdad tras desmontar la hipótesis del annulus:
+el η del E³ y el del S35 a L1 (−2.2 y +1.8 pts), la cobertura en 7-8
+etapas (50-75%: ahí sí queda acoplamiento real L0↔L1, ahora sin bug de
+arranque que lo enmascare), y la sensibilidad del punto fijo del E³ al
+camino del limitador (con los límites abiertos converge a PR 22.5 en vez
+de 21.9 — dos puntos fijos cercanos; queda anotado).
+
 ### Fase 12.3 (2026-08-17) — modelo de pérdidas de Koch & Smith en L1
 
 **Primero: hasta esta fase la campaña entera corría a L0 y nadie lo había
@@ -482,12 +567,12 @@ punta empujan a más diseños contra el limitador de perfil.
 
 #### Lo que sigue abierto
 
-- **Dos de cuatro máquinas no resuelven.** El R67 y el E³ mueren en
-  «estación BLOQUEADA: ni en el límite sónico pasa el gasto». Es el
-  acoplamiento L0↔L1 que el banco de pruebas ya había medido (el annulus
-  lo dimensiona L0 con Cx uniforme y L1 resuelve un perfil), agravado aquí
-  porque el annulus viene de θ invertido desde la medida. La cura de fondo
-  es que el annulus salga del mismo solver que lo usa.
+- **Dos de cuatro máquinas no resuelven.** ~~El R67 y el E³ mueren en
+  «estación BLOQUEADA»~~ — RESUELTO en la fase 12.4: no era el
+  acoplamiento L0↔L1 que hipotetizaba el banco, eran tres defectos del
+  solver (guarda sónica sobre el Mach absoluto, arranque con densidad
+  ambiente, rechazo por transitorios del limitador). Ver la sección
+  12.4.
 - **El η del Stage 35 empeora 0.34 pts.** Un solo punto y en la máquina
   menos transónica; no basta para tocar nada, pero queda anotado.
 - **L0 sigue con el choque normal de dos puntos.** Cambiarlo reabriría la
