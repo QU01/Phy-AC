@@ -401,6 +401,21 @@ predicción de pérdidas → (η, PR). Tabla vigente en
   objetivo**, las dos que fallan con diagnóstico.
   Verificación 165 → 177 checks.
 
+- **2026-08-17 — El PR del E³: el bloqueo extrapolado, y el WDF
+  descartado con medida (fase 12.5)**: de los dos candidatos
+  documentados para el déficit del E³, el **WDF queda eliminado por
+  inspección** (solo talla camber en la capa 5a; no toca trabajo ni
+  pérdidas del meanline) y el **bloqueo resultó ser una extrapolación**:
+  la Fig. 8 de Koch & Smith termina en Ch/Ch_máx = 1.0 por construcción,
+  y las etapas traseras del E³ invertido operan a x = 1.02-1.11, donde
+  el término 0.16·x³ les cobraba un débito sin respaldo (`EW_X_MAX`
+  1.05 → 1.00). Todo se mueve hacia la medida: E³ −5.58 → −5.14% (L0) y
+  −4.76 → **−4.14%** (L1); R67 y R37 mejoran una décima (también operan
+  con x > 1); S35 y el ancla intactos. Y la sorpresa está en el mapa:
+  los puntos cerca de bombeo pagaban ese mismo débito y la **pendiente
+  de la speedline pasa de −5.0% a −0.8% de error**. Verificación
+  195 checks.
+
 - **2026-08-17 — Las CUATRO máquinas medidas resuelven a L1 (fase
   12.4)**: la 12.3 dejó al R67 y al E³ en «estación bloqueada» con la
   hipótesis de que era el acoplamiento estructural L0↔L1. La

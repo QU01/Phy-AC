@@ -915,7 +915,18 @@ KOCH_DZ_S_REF = 0.38      # Δz/s de referencia (Fig. 6)
 # globalmente contra las cuatro máquinas de la campaña (documentado en
 # docs/VALIDATION.md §3). EW_X_MAX corta la extrapolación por encima del
 # stall, donde la figura ya no tiene datos.
-EW_A, EW_N, EW_X_MAX = 0.16, 3.0, 1.05
+#
+# EW_X_MAX = 1.00 EXACTO (era 1.05, fase 12.5): la abscisa de la Fig. 8
+# es Ch/Ch_MÁX, que por construcción termina en 1.0 — no es que falten
+# datos por encima, es que POR DEFINICIÓN no los puede haber. Un diseño
+# cuyo x_load supera 1 está más allá de la capacidad de Koch (las etapas
+# traseras del E³ en el θ invertido: x 1.02-1.11, y la máquina real
+# CORRE, así que es la capacidad la que queda corta ahí, no la etapa la
+# que está en stall); cobrarle además el x³ extrapolado era un débito de
+# bloqueo sin respaldo en la figura. El espesor al llegar al borde del
+# dominio se queda en el valor DE stall de la correlación, que ya es el
+# máximo medido.
+EW_A, EW_N, EW_X_MAX = 0.16, 3.0, 1.00
 
 
 def koch_L_over_g2(camber_deg: float, sigma: float,

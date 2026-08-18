@@ -482,6 +482,20 @@ anchors freeze the physics against silent drift (`--freeze-anchors`).
   quantities inside target**, both misses diagnosed.
   Verification 165 → 177 checks.
 
+- **2026-08-17 — E³'s PR: extrapolated blockage, and WDF ruled out by
+  measurement (phase 12.5)**: of the two documented candidates for the
+  E³ deficit, **WDF is eliminated by inspection** (it only carves camber
+  in layer 5a; it touches neither meanline work nor losses) and the
+  **blockage turned out to be an extrapolation**: Koch & Smith's Fig. 8
+  ends at Ch/Ch_max = 1.0 by construction, and the inverted E³'s rear
+  stages operate at x = 1.02-1.11, where the 0.16·x³ term charged them a
+  debit with no backing in the figure (`EW_X_MAX` 1.05 → 1.00).
+  Everything moves toward the measurement: E³ −5.58 → −5.14% (L0) and
+  −4.76 → **−4.14%** (L1); R67 and R37 gain a tenth (they also run at
+  x > 1); S35 and the anchor untouched. The surprise is in the map: the
+  near-stall points paid that same debit, and the **speedline slope goes
+  from −5.0% to −0.8% error**. Verification 195 checks.
+
 - **2026-08-17 — All FOUR measured machines now solve at L1 (phase
   12.4)**: phase 12.3 left R67 and E³ dying with "blocked station" under
   the hypothesis that it was the structural L0↔L1 annulus coupling.

@@ -355,6 +355,56 @@ NO está en el STEP ni en el margen estructural. Por eso la comparación se
 hace con el filete apagado y por eso queda anotado aquí: pendiente de
 investigar.
 
+### Fase 12.5 (2026-08-17) — el PR del E³: bloqueo extrapolado, y el WDF descartado con medida
+
+Los dos candidatos documentados desde la fase 8 para el déficit de PR del
+E³, revisados con instrumentación. Primero la aclaración de contabilidad:
+como el ψ del θ invertido ancla el TRABAJO medido (ΔT0 publicado), el
+déficit de PR **es** el déficit de η amplificado por ln PR — a PR 23,
+1.65 pts de η_poly son exactamente −5.6% de PR. Ir por el PR es ir por
+la η.
+
+**WDF: descartado.** En este modelo el work-done factor solo entra al
+TALLAR el álabe (la capa 5a le da más giro para lograr el ψ); no reduce
+el trabajo del meanline (ψ ya es la carga lograda) ni entra en las
+pérdidas (que se evalúan con ángulos de FLUJO, no metálicos). No hay
+mecanismo por el que el WDF mueva la η de esta contabilidad. Candidato
+eliminado por inspección, no por opinión.
+
+**Bloqueo: la correlación se extrapolaba fuera de su dominio.** La
+abscisa de la Fig. 8 de Koch & Smith es Ch/Ch_máx, que POR CONSTRUCCIÓN
+termina en 1.0 — no es que falten datos por encima, es que por
+definición no puede haberlos. `EW_X_MAX` permitía 1.05, y las etapas
+5-9 del E³ invertido operan a x_load 1.02-1.11 (más allá de la
+capacidad de Koch — y la máquina real CORRE, así que es la capacidad la
+que queda corta ahí, no la etapa la que está en stall). El término
+0.16·x³ extrapolado les cobraba un débito de bloqueo sin respaldo en la
+figura. `EW_X_MAX = 1.00`: al llegar al borde del dominio, el espesor se
+queda en el valor DE stall de la correlación, que ya es el máximo medido.
+
+Efecto (todo hacia la medida, nada se rompe):
+
+| | antes | después |
+|---|---|---|
+| E³ · L0 | −5.58% / −1.65 pts | **−5.14% / −1.52 pts** |
+| E³ · L1 | −4.76% / −2.19 pts | **−4.14% / −2.05 pts** |
+| R67 · L0 | −1.20% / −2.46 pts | −1.04% / −2.12 pts |
+| R37 · L0 | −1.20% / −1.57 pts | −1.15% / −1.51 pts |
+| S35 · L0 | +1.17% / +1.75 pts | sin cambio (x < 1) |
+| REF_AX4 (ancla) | | sin cambio (diseño factible, x < 1) |
+
+R37 y R67 también se movían porque en su punto de diseño operan con
+x > 1 (coherente con el margen de bombeo negativo del R37 en su ficha
+F-02). Y la mejora inesperada está en el MAPA: los puntos cerca de
+bombeo de la speedline eran exactamente los que pagaban el débito
+extrapolado, y la **pendiente dPR/dṁ pasa de −5.0% a −0.8% de error**
+contra la medida (pr_peak −1.11% → −0.86%, η_peak −2.89 → −2.77 pts).
+
+Lo que queda del déficit del E³ (−5.14% L0 / −4.14% L1) ya tiene el
+resto de su atribución en la sección 12.4: el sesgo de época de las
+correlaciones (el adder de θ/c de 1976 contra álabes de difusión
+controlada de 1983) y los límites de la inversión por vórtice libre.
+
 ### Fase 12.4 (2026-08-17) — las CUATRO máquinas resuelven a L1
 
 La fase 12.3 dejó al R67 y al E³ muriendo en «estación BLOQUEADA», con la

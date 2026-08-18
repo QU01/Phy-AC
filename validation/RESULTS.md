@@ -9,9 +9,9 @@ Metodología: el θ de cada máquina reproduce su annulus (r_tip vía φ1) y su 
 | Máquina | Plano | PR modelo | PR medido | ΔPR | η modelo | η medida | Δη [pts] | PR | η |
 |---|---|---|---|---|---|---|---|---|---|
 | NASA Stage 35 | etapa completa (t-t) | 1.841 | 1.820 | +1.17% | 0.845 (eta_isen) | 0.828 | +1.7 | PASS | PASS |
-| NASA Rotor 37 | rotor aislado (t-t) | 2.081 | 2.106 | -1.20% | 0.861 (eta_isen) | 0.877 | -1.6 | PASS | PASS |
-| NASA Rotor 67 | rotor aislado (t-t) | 1.610 | 1.630 | -1.20% | 0.905 (eta_isen) | 0.930 | -2.5 | PASS | PASS |
-| GE/NASA E3 HPC (10 etapas) | máquina multietapa (t-t) | 21.717 | 23.000 | -5.58% | 0.884 (eta_poly) | 0.900 | -1.6 | PASS | PASS |
+| NASA Rotor 37 | rotor aislado (t-t) | 2.082 | 2.106 | -1.15% | 0.862 (eta_isen) | 0.877 | -1.5 | PASS | PASS |
+| NASA Rotor 67 | rotor aislado (t-t) | 1.613 | 1.630 | -1.04% | 0.909 (eta_isen) | 0.930 | -2.1 | PASS | PASS |
+| GE/NASA E3 HPC (10 etapas) | máquina multietapa (t-t) | 21.817 | 23.000 | -5.14% | 0.885 (eta_poly) | 0.900 | -1.5 | PASS | PASS |
 
 ## Las mismas máquinas a fidelidad L1 (SCM)
 
@@ -21,8 +21,8 @@ Desde la fase 12.3 la campaña también califica L1 contra medida, llamando al S
 |---|---|---|---|---|---|
 | NASA Stage 35 | 1.835 | +0.82% | 0.846 | +1.8 | PR mejor, η peor |
 | NASA Rotor 37 | 2.105 | -0.06% | 0.880 | +0.3 | PR mejor, η mejor |
-| NASA Rotor 67 | 1.635 | +0.30% | 0.923 | -0.7 | PR mejor, η mejor |
-| GE/NASA E3 HPC (10 etapas) | 21.905 | -4.76% | 0.878 | -2.2 | PR mejor, η peor |
+| NASA Rotor 67 | 1.635 | +0.29% | 0.923 | -0.7 | PR mejor, η mejor |
+| GE/NASA E3 HPC (10 etapas) | 22.049 | -4.14% | 0.880 | -2.0 | PR mejor, η peor |
 
 ## Fuera de diseño (F-02)
 
@@ -30,9 +30,9 @@ Primera calificación del MAPA contra medida. Hasta la fase 12 la campaña solo 
 
 | Caso | Cantidad | Modelo | Medido | Δ | Objetivo | Guarda | |
 |---|---|---|---|---|---|---|---|
-| NASA Rotor 37 · 100% N | `mdot_choke` | 22.311 | 20.930 | +6.60% | ±5% | ±12% | FAIL |
+| NASA Rotor 37 · 100% N | `mdot_choke` | 22.298 | 20.930 | +6.54% | ±5% | ±12% | FAIL |
 | NASA Rotor 37 · 100% N | `stall_over_choke` | 0.904 | 0.925 | -2.23% | ±3% | ±6% | PASS |
-| NASA Rotor 37 · 100% N | `mdot_stall` | 20.176 | 19.360 | +4.22% | ±5% | ±8% | PASS |
+| NASA Rotor 37 · 100% N | `mdot_stall` | 20.165 | 19.360 | +4.16% | ±5% | ±8% | PASS |
 
 **NASA Rotor 37 · 100% N** — fuente: AGARD AR-355 (Dunham ed., 1998), §2.1.4.1 «Test Conditions»: «This near stall flow rate was experimentally determined to be ṁ/ṁ_choke = 0.925 [...] The experimental ṁ_choke as determined by NASA was 20.93 kg/s». Mismo documento: holgura de punta 0.0356 cm a velocidad de diseño (la que ya inyecta la entrada de MACHINES). Punto de diseño: 20.188 kg/s, PR 2.106, η_ad 0.877, 17 188.7 rpm.
 
@@ -45,11 +45,11 @@ Fuente: NASA Turbulence Modeling Resource, paquete experimental del Rotor 37 (`r
 
 | Métrica | Modelo | Medido | Δ | Objetivo | |
 |---|---|---|---|---|---|
-| `pr_max_abs` | -1.11% media | | 2.12% | 0.05 | PASS |
+| `pr_max_abs` | -1.03% media | | 2.12% | 0.05 | PASS |
 | `eta_max_abs` | 13 puntos | | 4.39p | 0.03 | FAIL |
-| `pr_peak` | 2.120/2.144 | | -1.11% | 0.05 | PASS |
-| `eta_peak` | 0.862/0.891 | | -2.89p | 0.03 | PASS |
-| `slope_rel` | -0.0896/-0.0943 | | -5.0% | 0.20 | PASS |
+| `pr_peak` | 2.126/2.144 | | -0.86% | 0.05 | PASS |
+| `eta_peak` | 0.863/0.891 | | -2.77p | 0.03 | PASS |
+| `slope_rel` | -0.0936/-0.0943 | | -0.8% | 0.20 | PASS |
 
 Punto a punto:
 
@@ -61,13 +61,13 @@ Punto a punto:
 | 20.665 | 2.065 | 2.021 | -2.12% | 0.887 | 0.853 | -3.44 | +0.039 |  |
 | 20.557 | 2.071 | 2.036 | -1.68% | 0.879 | 0.855 | -2.36 | +0.027 |  |
 | 20.520 | 2.084 | 2.041 | -2.06% | 0.879 | 0.856 | -2.28 | +0.024 | peak eff. |
-| 20.235 | 2.099 | 2.076 | -1.11% | 0.872 | 0.861 | -1.12 | -0.006 |  |
-| 20.135 | 2.110 | 2.085 | -1.16% | 0.875 | 0.862 | -1.33 | -0.014 |  |
-| 20.058 | 2.114 | 2.092 | -1.06% | 0.868 | 0.862 | -0.59 | -0.019 |  |
-| 19.808 | 2.128 | 2.106 | -1.02% | 0.861 | 0.860 | -0.09 | -0.032 |  |
-| 19.805 | 2.135 | 2.106 | -1.34% | 0.862 | 0.860 | -0.19 | -0.032 |  |
-| 19.409 | 2.141 | 2.120 | -0.99% | 0.850 | 0.852 | +0.15 | -0.048 | near stall |
-| 19.390 | 2.144 | 2.120 | -1.11% | 0.848 | 0.851 | +0.30 | -0.048 |  |
+| 20.235 | 2.099 | 2.076 | -1.08% | 0.872 | 0.861 | -1.08 | -0.006 |  |
+| 20.135 | 2.110 | 2.087 | -1.09% | 0.875 | 0.863 | -1.23 | -0.014 |  |
+| 20.058 | 2.114 | 2.094 | -0.96% | 0.868 | 0.863 | -0.47 | -0.019 |  |
+| 19.808 | 2.128 | 2.110 | -0.85% | 0.861 | 0.862 | +0.14 | -0.032 |  |
+| 19.805 | 2.135 | 2.110 | -1.17% | 0.862 | 0.862 | +0.03 | -0.032 |  |
+| 19.409 | 2.141 | 2.125 | -0.74% | 0.850 | 0.855 | +0.48 | -0.048 | near stall |
+| 19.390 | 2.144 | 2.126 | -0.86% | 0.848 | 0.854 | +0.62 | -0.048 |  |
 
 ### Detalle por máquina
 
