@@ -434,11 +434,55 @@ gradientes de pared que la habían doblado), residual L1−L0 conservado
 del álabe itera más con la mezcla activa.
 
 Lo que sigue abierto de verdad tras desmontar la hipótesis del annulus:
-el η del E³ y el del S35 a L1 (−2.2 y +1.8 pts), la cobertura en 7-8
-etapas (50-75%: ahí sí queda acoplamiento real L0↔L1, ahora sin bug de
-arranque que lo enmascare), y la sensibilidad del punto fijo del E³ al
-camino del limitador (con los límites abiertos converge a PR 22.5 en vez
-de 21.9 — dos puntos fijos cercanos; queda anotado).
+el η del E³ y el del S35 a L1 (−2.2 y +1.8 pts — el del E³ queda
+atribuido abajo), y la cobertura en 7-8 etapas (50-75%: ahí sí queda
+acoplamiento real L0↔L1, ahora sin bug de arranque que lo enmascare).
+
+**Retractación** (2026-08-17, mismo día): la nota sobre «dos puntos
+fijos cercanos» del E³ (PR 21.9 vs 22.5 según el camino del limitador)
+era un ARTEFACTO del script de diagnóstico, que restauraba la holgura de
+punta publicada ANTES de llamar al solver: la corrida «sin limitador»
+corría con ε = 0.4 mm en vez de los 0.5 mm del E³. Con la holgura
+correcta, el punto fijo es único e independiente del clip (PR 21.9049
+idéntico con límites [0.3, 2.4], [0.15, 3.5] y [0.02, 8]). El solver es
+determinista; la nota queda retirada.
+
+#### De dónde salen los −2.2 pts de η del E³ a L1 (atribución medida)
+
+La entropía L1 acumula 130.4 J/kg·K contra 112.9 de L0 (+15%). Sobre la
+cinemática L1 CONGELADA (repitiendo las llamadas de pérdida de la última
+pasada con cada corrección apagada, sin re-resolver — el E³ vive en un
+equilibrio sensible al nivel de pérdida y re-resolver mezcla el efecto
+con la realimentación trabajo↔densidad):
+
+| suma de ds de las 20 filas | J/kg·K |
+|---|---|
+| L1 completo | 78.3 |
+| … sin adder de θ/c | 70.8 (**adder: +7.5**) |
+| … sin corrección de contracción | 75.4 (contracción: +2.9) |
+| … sin choque/romo del BA | 74.9 (choque: +3.4) |
+| … sin adder ni contracción | **68.4** |
+| L0, filas rotor+estátor | **68.4** |
+
+Dos lecturas. La primera es una VERIFICACIÓN que no se buscaba: sin las
+dos correcciones de perfil nuevas, la integración de pérdidas en el span
+reproduce las filas del meanline al décimo de J/kg·K — el residual del
+E³ es atribuible al modelo, no ruido del solver. La segunda es la
+atribución: el **adder de θ/c domina** (+7.5 de los +9.9), y es
+exactamente el débito que Koch & Smith declararon necesitar para casar
+con los ensayos de GE de los años 70 («reduces the calculated efficiency
+by about 1.0 to 1.5 points»). El programa E³ existió precisamente para
+SUPERAR ese estado del arte con álabes de difusión controlada y su η
+medida lo refleja: L1 le está cobrando a una máquina de 1983 la
+tecnología de 1976. El L0 no lo sufre porque su `K_PROFILE = 1.24` está
+CALIBRADO contra estas cuatro máquinas (el E³ incluido) — absorbe el
+sesgo de época en la constante. La parte de choque (+3.4) incluye el
+cubo TRANSÓNICO del estátor 0 (M 1.14), que es un artefacto de la
+inversión por vórtice libre: el E³ real usa torbellino controlado
+justamente para mantener subsónicos los cubos de estátor. Ninguna de
+las tres piezas se toca: son el modelo publicado trabajando, y ajustar
+constantes por máquina es el trabajo de la capa de calibración (L2), no
+del modelo físico.
 
 ### Fase 12.3 (2026-08-17) — modelo de pérdidas de Koch & Smith en L1
 
