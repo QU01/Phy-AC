@@ -305,21 +305,67 @@ PR 2.7160→2.7616, η_poly 0.8871→0.9013.
 
 ## 5. Pendientes
 
-- **Cerrar el FUERA DE DISEÑO.** La fase 12 calificó los dos extremos
-  del rango de gasto del Rotor 37 al 100% (§2): el criterio de bombeo
-  PASA (−2.2%), el de choke NO (+6.6%). Queda: (a) el criterio de
-  garganta con Mach relativo que arregla el choke — pendientes G-09/F-07,
-  con revalidación de las cuatro máquinas y las anclas; (b) el PR de pico
-  y la pendiente de la speedline, que el AGARD publica solo como figura
-  (los 13 puntos medidos se piden a NASA, AR-355 §2.1.5); (c) velocidad
-  PARCIAL, donde viven los VSV y el sangrado y no hay ni un dato.
-- Digitalizar speedlines completas de Rotor 37 (choke mdot ±2%) cuando
-  haya fuente estable (las URL de turbmodels rotaron — 2026-07).
-- Verificar la entrada E³ contra el CR original (distribución por etapa
-  real → sustituir el fit de `slopes` y endurecer hacia 5%; entrada
-  marcada APROXIMADA en machines.py).
-- Con validación off-design (speedlines): calibrar el mapa VSV.
-- Pares CFX/banco para `HiFiCalibration` (L2) del sesgo L1 (≈0.94 en PR).
+Actualizado 2026-08-17, tras las fases 12.1-12.5. Lo que estas fases
+CERRARON ya no está aquí: los 13 puntos medidos de la speedline (TMR,
+verbatim, corroborados por digitalización independiente), F-02 al 100%
+de velocidad (6 de 8 cantidades en objetivo; la pendiente casi exacta
+tras la 12.5), la
+calificación de L1 contra medida (las cuatro máquinas, PR mejor que L0
+en todas), y los dos candidatos históricos del déficit del E³ (WDF
+descartado por inspección; bloqueo extrapolado corregido).
+
+### Fuera de diseño
+
+- **G-09/F-07 · el criterio de CHOKE** — la única cantidad de F-02 fuera
+  de objetivo (+6.5%, objetivo ±5%, guarda ±12%). La fase 12.1 dejó
+  medido por qué no sale con una sola rama: la garganta en el borde de
+  ataque clava el R37 (M_rel 1.30, incidencia única) pero declara
+  chocados el R67 y el E³; abrirla los arregla y dispara el R37 +11-26%.
+  Hace falta la rama SUBSÓNICA y la SUPERSÓNICA por separado, con
+  revalidación completa (cuatro máquinas + F-02 + anclas + feasibility:
+  el intento midió −9 pts de espacio factible).
+- **El η punto a punto de la speedline** — −4.4 pts en el extremo de
+  choke convergiendo a +0.3 cerca de bombeo (objetivo 3 pts): el modelo
+  sobrecarga la pérdida a incidencia NEGATIVA. Apunta al bucket de
+  incidencia (`_incidence_bucket`, rama negativa 1.5× y semiancho W(M))
+  y a la ley de desviación off-design. Ahora hay 13 puntos medidos para
+  ajustarla en vez de adivinarla.
+- **Velocidad PARCIAL** — todo lo validado es al 100% de N. Los VSV y el
+  sangrado (fase 9) siguen sin contrastar con ningún dato; el paquete
+  del TMR solo trae la línea del 100%. Buscar speedlines de 70-90% (el
+  AR-355 las publica como figura para el R37) y, con ellas, calibrar el
+  mapa VSV.
+
+### Modelo físico
+
+- **El déficit restante del E³** (−5.14% L0 / −4.14% L1 en PR) — SIN
+  candidatos pendientes: atribuido en las secciones 12.4-12.5 al sesgo
+  de época de las correlaciones (adder de θ/c de 1976 contra álabes de
+  difusión controlada de 1983) y a la inversión por vórtice libre (cubo
+  de estátor transónico que el E³ real no tiene). Dos vías legítimas de
+  cierre: la entrada E³ contra el CR-165558 original (sustituir el fit
+  de `slopes` por la distribución real y endurecer 6%→5%) y la capa L2
+  (pares CFX/banco para `HiFiCalibration`).
+- **El η de L1 en S35 y E³** (+1.8 / −2.05 pts, peor o igual que L0 en
+  esas dos) — L1 gana en PR en las cuatro y en η solo en los rotores
+  aislados. La parte del E³ está atribuida (arriba); la del S35 es un
+  solo punto y queda en observación.
+- **Cobertura del banco L1 en 7-8 etapas** (50-75%) — el acoplamiento
+  L0↔L1 REAL que queda tras quitar el bug de arranque de la 12.4: el
+  annulus lo dimensiona L0 con su Cx uniforme y sobre 7-8 etapas la
+  diferencia se compone. La cura de fondo sigue siendo que el annulus
+  salga del MISMO solver que lo usa (o dimensionar con el perfil L1).
+
+### Infraestructura y datos
+
+- **El filete de raíz de la capa 5c** añade 117 cm³ (24%) a un anillo de
+  carcasa de 488 cm³ para un filete de 2 mm — hallazgo abierto de G-01;
+  la paridad STL↔STEP corre con el filete apagado en las dos rutas.
+- Pares CFX/banco para `HiFiCalibration` (L2): la API existe desde la
+  fase 11 y sigue sin usuario. Con el residual L1−L0 ya con física
+  propia (12.3), es el siguiente peldaño natural.
+- Promover el job `full` del CI fuera de `continue-on-error` cuando el
+  runner aguante la suite completa de forma estable.
 
 ### Paridad STL ↔ STEP (fase 10 · G-01)
 
