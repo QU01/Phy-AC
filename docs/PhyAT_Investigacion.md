@@ -24,6 +24,7 @@ ecuaciones y las citas completas viven en los cinco informes):
 | [03 · Estado del arte CFD / fidelidades altas](phyat_research/03_sota_cfd_altas_fidelidades.md) | Cadena industrial, RANS/transición, GPU, efectos que las correlaciones no ven (purga, hot streaks, shroud, wake recovery), benchmarks públicos, calibración KOH, precisiones honestas por fidelidad, paquete de BCs CFD |
 | [04 · ML, PINNs, UQ y optimización](phyat_research/04_ml_pinns_uq_optimizacion.md) | Veredicto sobre PINNs/operadores neuronales/generativos, multifidelidad KOH, conformal prediction, qué conservar de Phy-AC y 10 mejoras puntuales priorizadas |
 | [05 · Geometría y estructuras](phyat_research/05_geometria_estructuras_turbina.md) | Parametrización de Pritchard, apilado/lean/shroud, arquitectura mecánica (fir-tree, NGV segmentados, sellos), creep/Larson-Miller, 14 CFR 33.27, contrato `phyat-axial-1`, plan de la capa 5c |
+| [06 · GPU y CFD diferenciable](phyat_research/06_gpu_diferenciable_xlb_jaxfluids_warp.md) | XLB, JAX-Fluids y NVIDIA Warp auditados **leyendo su código fuente**: veredictos (descartar/vigilar), el ecosistema (SU2, PyFR, JAX-FVM, FluidX3D…), y dónde sí capturar el valor diferenciable (JAX sobre L0/L1, MULTALL como L3 interno) |
 
 > **Nota de método**: los cinco informes fueron elaborados con acceso web
 > restringido (proxy de egreso que bloquea los dominios académicos). Cada
@@ -232,6 +233,62 @@ Re 70k–120k, con estelas y purga — el mejor caso moderno) → VKI LS89
 públicas en data.gov) → MT1 (η de etapa HP con distorsión) → LISA (shroud y
 purga por etapa).
 
+### D.1 · GPU y CFD diferenciable: XLB, JAX-Fluids, NVIDIA Warp (síntesis del informe 06)
+
+Auditoría hecha **clonando y leyendo el código fuente de los tres repos**.
+Conclusión: **ninguna puede correr hoy un pasaje de turbina axial transónica
+con y+≈1** — les faltan piezas físicas de primer orden, no de conveniencia:
+
+- **XLB (Autodesk, Apache-2.0) — DESCARTAR**: es LBM **incompresible
+  isotermo** (la clase se llama `IncompressibleNavierStokesStepper`);
+  "Supersonic Flows" está en la *wishlist* del README, no en desarrollo; sin
+  modelo de pared (la condición de existencia del LBM cartesiano a Re 10⁶ —
+  sin él, 10¹²–10¹⁴ celdas), sin marco rotatorio ni periodicidad de paso; y
+  su diferenciabilidad **solo funciona en el backend JAX** — el backend Warp
+  (el rápido) devuelve **gradientes cero**, según el propio comentario del
+  repo. El LBM transónico industrial existe (ProLB corrió el LS89;
+  PowerFLOW llega a Mach 2) pero es otro método (HRR térmico + D3Q39 +
+  overset) que XLB no tiene.
+- **JAX-Fluids (TUM, MIT) — VIGILAR**: el mejor solver compresible
+  diferenciable abierto (WENO/TENO, level-set, positivity, checkpointing
+  para el backprop, 512 A100 probadas), pero **cartesiano por arquitectura**:
+  sin malla body-fitted, sin marco rotatorio, sin periodicidad de paso, sin
+  NSCBC, con γ y cp **constantes** (verificado en `ideal_gas.py`), sin RANS
+  ni wall model. Rol acotado: banco de física canónica 2D (SBLI, burbuja de
+  separación, mezcla de estela) y laboratorio de aprendizaje de cierres —
+  **nunca L3, nunca pares de calibración**.
+- **NVIDIA Warp (Apache-2.0) — DESCARTAR como base de solver**: no es un
+  solver, es un compilador Python→CUDA con AD (con limitaciones serias:
+  `*=` rompe el gradiente, los bucles dinámicos no se reproducen en el
+  backward). De ~130 publicaciones del ecosistema, ~90 % son
+  robótica/gráficos y **cero turbomáquinas**. Escribir el RANS de turbina en
+  Warp = reconstruir Turbostream (3–5 años-persona). Nicho residual:
+  geometría GPU (BVH/SDF) para 5a/5c si algún día hiciera falta.
+
+**Dónde sí capturar el valor diferenciable** (el hallazgo accionable):
+
+1. **El gradiente que Phy-AT necesita no es el del CFD.** Para calibrar los
+   modelos de pérdidas por descenso de gradiente basta ∂y_L1/∂θ_loss — la
+   derivada del **modelo barato** respecto a sus coeficientes; y_hifi es una
+   constante. → **Escribir el meanline L0 (y opcionalmente el SCM) en
+   `jax.numpy` desde el primer día** (coste ~0 en diseño inicial, carísimo
+   como retrofit; corre en laptop CPU): sustituye la calibración afín de 2
+   parámetros por una calibración física regularizada de 10–30 coeficientes
+   que extrapola. Encaja con el marco KOH del informe 04.
+2. **Empaquetar MULTALL como L3 interno opcional** (Meangen/Stagen generados
+   desde el contrato → parser de la salida a (Γ, η_tt, ER, α_exit, perfiles
+   radiales)): decenas de pares desatendidos en CPU, red de seguridad sin
+   licencia comercial. *El mayor retorno por unidad de esfuerzo del
+   informe 06.*
+3. Si algún día hace falta **gradiente sobre la alta fidelidad** (forma):
+   **SU2** — ya tiene mixing plane conservativo + NRBC de Giles + adjunto
+   discreto validado en turbinas axiales. Días, no años.
+4. **Vigilar sin invertir**: JAX-FVM (arXiv:2607.07385) y DiFVM
+   (arXiv:2603.15920) — los primeros FV diferenciables sobre **malla no
+   estructurada**, el verdadero horizonte que rompería la barrera
+   "diferenciable ⇒ cartesiano". FluidX3D queda descartado por licencia
+   (solo no comercial).
+
 ---
 
 ## E. Capas 2–4: ML, UQ y optimización (síntesis del informe 04)
@@ -357,6 +414,11 @@ en `validation/`.
 | **Pritchard ref.** ([DavidPoves/11-Parameters…](https://github.com/DavidPoves/11-Parameters-Turbine-Blade-Generator)) | — | implementación legible del método de perfil elegido |
 | **turbigen** ([turbigen.org](https://turbigen.org/)) | abierto | la contra-tesis a responder (CFD GPU se salta el throughflow) y el dato de coste (~10 min/RANS en A100) |
 | **T-AXI** (U. Cincinnati) | ejecutable | la alternativa Newton-acoplada (MTFLOW) si el lazo Novak resulta frágil |
+| **SU2** ([su2code.github.io](https://su2code.github.io/)) | LGPL-2.1 | la vía realista al **adjunto sobre alta fidelidad**: mixing plane conservativo + NRBC de Giles + adjunto discreto (CoDiPack) validado en turbinas axiales |
+| **JAX-Fluids** ([tumaer/JAXFLUIDS](https://github.com/tumaer/JAXFLUIDS)) | MIT | VIGILAR — banco de física canónica 2D y laboratorio de cierres diferenciables; cartesiano por arquitectura, nunca L3 (informe 06) |
+| **XLB** ([Autodesk/XLB](https://github.com/Autodesk/XLB)) | Apache-2.0 | DESCARTADO — LBM incompresible isotermo, sin wall model ni marco rotatorio; gradientes cero en su backend rápido (informe 06) |
+| **NVIDIA Warp** ([NVIDIA/warp](https://github.com/NVIDIA/warp)) | Apache-2.0 | DESCARTADO como base de solver (no es un solver); nicho residual de geometría GPU para 5a/5c (informe 06) |
+| **PyFR** ([pyfr.org](https://pyfr.org/)) | BSD-3 | LES/ILES de cascada en GPU (T106C, MTU-T161) — generador de priors L4, fuera del lazo |
 | **SMT (MFCK)** | BSD | co-kriging recursivo cuando el flywheel tenga ≥15 pares |
 | **turbodesigner** (OpenOrion) | MIT | el ancestro de la 5a de Phy-AC — **sin turbinas** (verificado): la turbina hay que escribirla |
 | **Datos**: SPLEEN C1 (Zenodo), NASA E³ (data.gov: geometría+malla+BCs), Kofskey (NTRS + YAMLs de TurboFlow), LS89, PAK-B, T106, MT1, LISA | abiertos | pares semilla de calibración y campaña de validación |
@@ -466,7 +528,10 @@ verificación antes de la siguiente):
 
 1. **`physics_turbine.py` (L0)**: gas cp(T,FAR); triángulos (φ,ψ,R);
    AMDC-KO+Benner; Aungier; Mach crítico analítico; marcha de entropía;
-   Gauntner+Hartsel; g A–D. → **Fase 1 de validación (Kofskey).**
+   Gauntner+Hartsel; g A–D. **Escrito en `jax.numpy` desde el primer día**
+   (informe 06: coste ~0 en diseño inicial, habilita la calibración por
+   gradiente de los coeficientes de pérdidas; sigue corriendo en laptop
+   CPU). → **Fase 1 de validación (Kofskey).**
 2. **`structures_turbine.py` (L1s)**: materiales calientes por pieza +
    Larson-Miller; disco con término térmico; 9 g. → regresión Timoshenko +
    anclas de creep documentadas.
@@ -482,7 +547,10 @@ verificación antes de la siguiente):
    turbina + NozzleSegment (prioridad máxima) → shroud/sellos/cover plates →
    paridad STL↔STEP + interferencias.
 7. **L2/L3**: emisor de BCs de turbina + parser de retorno; pares semilla
-   (Aachen → SPLEEN → LS89 → E³); calibración estratificada.
+   (Aachen → SPLEEN → LS89 → E³); calibración estratificada; **MULTALL
+   empaquetado como L3 interno opcional** (Meangen/Stagen desde el contrato
+   → parser de salida → pares desatendidos en CPU — informe 06, el mayor
+   retorno por esfuerzo).
 
 **Riesgos principales** (consolidados de los cinco informes):
 
